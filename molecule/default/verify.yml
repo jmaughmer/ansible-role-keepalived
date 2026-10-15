@@ -1,4 +1,11 @@
 ---
+# The virtual addresses are taken from the first web host's network, so facts
+# are gathered from every host first: each Molecule step is its own run.
+- name: Gather facts from every host
+  hosts: all
+  gather_facts: true
+  tasks: []
+
 - name: Verify the web hosts
   hosts: web
   gather_facts: false
