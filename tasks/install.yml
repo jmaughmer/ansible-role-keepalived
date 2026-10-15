@@ -1,0 +1,15 @@
+---
+# keepalived comes from the host's enabled repositories (AppStream). Package
+# downloads run as async jobs so a dropped SSH session does not abort them,
+# and are retried if the download itself fails.
+- name: Install | Install keepalived
+  ansible.builtin.dnf:
+    name: "{{ keepalived_packages }}"
+    state: present
+    lock_timeout: "{{ keepalived_dnf_lock_timeout }}"
+  async: "{{ 0 if ansible_check_mode else keepalived_download_async_timeout }}"
+  poll: "{{ keepalived_download_async_poll }}"
+  register: _ka_package_install
+  until: _ka_package_install is not failed
+  retries: "{{ keepalived_task_retries }}"
+  delay: "{{ keepalived_task_delay }}"

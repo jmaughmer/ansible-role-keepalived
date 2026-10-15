@@ -1,0 +1,14 @@
+---
+# Resilience settings for hosts behind high-latency, low-bandwidth satellite
+# links. The role defaults suit ordinary networks. Connection-level settings
+# (SSH reconnects, keepalives, timeouts) are in ../ansible.cfg.
+
+# Retries for the package download
+keepalived_task_retries: 8
+keepalived_task_delay: 60
+
+# Package downloads run as async jobs: they keep running on the host when the
+# SSH session drops and Ansible polls for the result.
+keepalived_download_async_timeout: 14400    # 4 h per attempt
+keepalived_download_async_poll: 60
+keepalived_dnf_lock_timeout: 1800

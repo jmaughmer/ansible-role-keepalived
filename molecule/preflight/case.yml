@@ -1,0 +1,66 @@
+---
+# One case from converge.yml (test_case comes from its import): run facts and
+# preflight with the case's settings, then check the outcome on each host.
+- name: Preflight case | {{ test_case.name | default('') }}
+  hosts: "{{ test_case.hosts | default('web') }}"
+  gather_facts: true
+  vars_files:
+    - vars/shared.yml
+  tasks:
+    # Facts outlive the play, so clear the previous case's outcome.
+    - name: Reset the outcome | {{ test_case.name }}
+      ansible.builtin.set_fact:
+        test_failed: false
+        test_failed_task: ""
+        test_failure: ""
+
+    - name: Run the role's preflight | {{ test_case.name }}
+      vars:
+        keepalived_supported_distributions: "{{ test_case.distributions | default(['RedHat', 'AlmaLinux', 'Rocky']) }}"
+        keepalived_instances: "{{ test_case.instances | default(test_instances) }}"
+        keepalived_priority: "{{ test_case.priority | default('') }}"
+        keepalived_vrrp_version: "{{ test_case.vrrp_version | default(3) }}"
+        keepalived_unicast: "{{ test_case.unicast | default(false) }}"
+        keepalived_firewall_ports: "{{ test_case.firewall_ports | default([]) }}"
+        keepalived_fapolicyd_trust: "{{ test_case.fapolicyd_trust | default('auto') }}"
+      block:
+        - name: Gather the role's facts | {{ test_case.name }}
+          ansible.builtin.include_role:
+            name: "{{ test_role }}"
+            tasks_from: facts
+
+        - name: Run the preflight checks | {{ test_case.name }}
+          ansible.builtin.include_role:
+            name: "{{ test_role }}"
+            tasks_from: preflight
+
+      rescue:
+        # A run_once check fails every host, but only the host it ran on gets
+        # its result; the others may see no failed result at all.
+        - name: Record the failure | {{ test_case.name }}
+          ansible.builtin.set_fact:
+            test_failed: true
+            test_failed_task: "{{ ansible_failed_task.name | default('') }}"
+            test_failure: >-
+              {{ ([ansible_failed_result | default({})] + (ansible_failed_result.results | default([])))
+                 | selectattr('msg', 'defined') | map(attribute='msg') | join(' ') }}
+
+    - name: Check the outcome | {{ test_case.name }}
+      vars:
+        test_should_fail: "{{ test_case.task | length > 0 and inventory_hostname in (test_case.fail_on | default(ansible_play_hosts_all)) }}"
+        test_check_detail: "{{ not (test_case.run_once | default(false)) or inventory_hostname == ansible_play_hosts_all[0] }}"
+      ansible.builtin.assert:
+        that:
+          - test_failed == test_should_fail
+          - not test_failed or not test_check_detail or test_failed_task == 'Preflight | ' ~ test_case.task
+          - not test_failed or not test_check_detail or test_failure is search(test_case.expect | default(''))
+        fail_msg: >-
+          Case '{{ test_case.name }}' on {{ inventory_hostname }}: expected
+          {{ ('a failure in "Preflight | ' ~ test_case.task ~ '"') if test_should_fail else 'no failure' }},
+          got {{ ('a failure in "' ~ test_failed_task ~ '": ' ~ test_failure) if test_failed else 'none' }}.
+        quiet: true
+
+    # A run_once failure leaves the other hosts marked failed although their
+    # rescue ran; without this they would sit out every later case.
+    - name: Bring every host back for the next case | {{ test_case.name }}
+      ansible.builtin.meta: clear_host_errors

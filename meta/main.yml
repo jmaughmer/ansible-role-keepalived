@@ -1,0 +1,23 @@
+---
+galaxy_info:
+  role_name: keepalived
+  namespace: jmaughmer
+  author: Justin Maughmer
+  description: >-
+    Virtual IP addresses with keepalived (VRRP) on RHEL, AlmaLinux and Rocky Linux 9/10, held only
+    by hosts whose service passes a health check; built for Kibana, Logstash and Fleet Server
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    # EL: RHEL, AlmaLinux and Rocky Linux
+    - name: EL
+      versions:
+        - "9"
+        - "10"
+  galaxy_tags:
+    - keepalived
+    - vrrp
+    - elastic
+    - networking
+
+dependencies: []

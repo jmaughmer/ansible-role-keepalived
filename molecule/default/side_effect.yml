@@ -1,0 +1,81 @@
+---
+# Failover: stop the web server on the host holding the addresses, and both
+# move to the other host, since both check that server. Start it again, and
+# they stay where they are (nopreempt).
+- name: Find the host holding the addresses
+  hosts: web
+  gather_facts: false
+  tasks:
+    - name: List the host's addresses
+      ansible.builtin.command:
+        cmd: ip -o addr show
+      register: test_addrs
+      changed_when: false
+
+    - name: Record which host holds them
+      ansible.builtin.set_fact:
+        test_holder: >-
+          {{ ansible_play_hosts | map('extract', hostvars, ['test_addrs', 'stdout'])
+           | zip(ansible_play_hosts) | selectattr(0, 'search', ' ' ~ test_vip_web ~ '/') | map(attribute=1) | list }}
+
+    - name: Check exactly one host holds the address
+      ansible.builtin.assert:
+        that:
+          - test_holder | length == 1
+        fail_msg: "Expected one host holding {{ test_vip_web }}, found {{ test_holder }}."
+      run_once: true
+
+- name: Fail the holder's check
+  hosts: web
+  gather_facts: false
+  tasks:
+    - name: Stop the web server on the holder
+      ansible.builtin.systemd_service:
+        name: molecule-web
+        state: stopped
+      when: inventory_hostname == test_holder[0]
+
+    - name: Wait for the other host to take both addresses
+      ansible.builtin.command:
+        cmd: ip -o addr show
+      register: test_after
+      changed_when: false
+      until:
+        - test_after.stdout is search(' ' ~ test_vip_web ~ '/')
+        - test_after.stdout is search(' ' ~ test_vip_tcp ~ '/')
+      retries: 30
+      delay: 1
+      when: inventory_hostname != test_holder[0]
+
+    - name: Check the old holder let both go
+      ansible.builtin.command:
+        cmd: ip -o addr show
+      register: test_released
+      changed_when: false
+      failed_when: >-
+        test_released.stdout is search(' ' ~ test_vip_web ~ '/')
+        or test_released.stdout is search(' ' ~ test_vip_tcp ~ '/')
+      when: inventory_hostname == test_holder[0]
+
+- name: Recover the old holder
+  hosts: web
+  gather_facts: false
+  tasks:
+    - name: Start the web server on the old holder
+      ansible.builtin.systemd_service:
+        name: molecule-web
+        state: started
+      when: inventory_hostname == test_holder[0]
+
+    - name: Wait for the old holder's checks to pass again
+      ansible.builtin.wait_for:
+        timeout: 10
+
+    - name: Check the addresses did not move back
+      ansible.builtin.command:
+        cmd: ip -o addr show
+      register: test_settled
+      changed_when: false
+      failed_when: >-
+        (test_settled.stdout is search(' ' ~ test_vip_web ~ '/')) != (inventory_hostname != test_holder[0])
+        or (test_settled.stdout is search(' ' ~ test_vip_tcp ~ '/')) != (inventory_hostname != test_holder[0])

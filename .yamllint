@@ -1,0 +1,22 @@
+---
+# Compatible with ansible-lint, which runs yamllint with these rules too.
+extends: default
+
+rules:
+  line-length:
+    max: 160
+  comments:
+    min-spaces-from-content: 1
+  # Commented-out values under a key, as in examples/inventory/hosts.yml
+  comments-indentation: false
+  braces:
+    max-spaces-inside: 1
+  octal-values:
+    forbid-implicit-octal: true
+    forbid-explicit-octal: true
+  truthy:
+    allowed-values: ["true", "false"]
+    check-keys: false
+
+ignore: |
+  .ansible/

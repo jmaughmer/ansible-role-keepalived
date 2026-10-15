@@ -1,0 +1,10 @@
+---
+# logstash.example.com resolves to 192.0.2.11: senders that can only be given
+# one destination, such as syslog devices, send to it.
+keepalived_instances:
+  - name: logstash
+    address: 192.0.2.11/24
+    virtual_router_id: 52
+    check:
+      type: tcp
+      port: 5514

@@ -1,0 +1,5 @@
+---
+collections:
+  - name: ansible.posix       # the role's firewalld and sysctl tasks
+  - name: containers.podman   # Molecule's podman driver
+  - name: community.docker    # Molecule's docker driver (docker scenario)

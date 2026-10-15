@@ -1,0 +1,17 @@
+---
+# Shared by every scenario that runs the role (inventory links in each
+# molecule.yml): two hosts in the group "web" share two virtual addresses, and
+# ka-client reaches them.
+
+test_role_dir: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') }}"
+
+# The virtual addresses are taken from the container network, which Podman or
+# Docker picks: .240 and .241 of the first web host's /24.
+test_net: "{{ hostvars[groups['web'][0]].ansible_facts.default_ipv4.network.split('.')[:3] | join('.') }}"
+test_prefix: "{{ hostvars[groups['web'][0]].ansible_facts.default_ipv4.prefix }}"
+test_vip_web: "{{ test_net }}.240"
+test_vip_tcp: "{{ test_net }}.241"
+test_web_port: 8080
+
+# The unicast scenario sets MOLECULE_KEEPALIVED_UNICAST=true.
+keepalived_unicast: "{{ lookup('env', 'MOLECULE_KEEPALIVED_UNICAST') | default('false', true) | bool }}"

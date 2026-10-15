@@ -1,0 +1,96 @@
+---
+- name: Verify the web hosts
+  hosts: web
+  gather_facts: false
+  tasks:
+    - name: Read the service state
+      ansible.builtin.systemd_service:
+        name: keepalived
+      register: test_service
+
+    - name: Check keepalived is running and enabled
+      ansible.builtin.assert:
+        that:
+          - test_service.status.ActiveState == 'active'
+          - test_service.status.UnitFileState == 'enabled'
+
+    - name: Test the configuration
+      ansible.builtin.command:
+        cmd: keepalived --config-test -f /etc/keepalived/keepalived.conf
+      changed_when: false
+
+    - name: Read the configuration
+      ansible.builtin.slurp:
+        src: /etc/keepalived/keepalived.conf
+      register: test_conf_raw
+
+    - name: Check the configuration
+      vars:
+        test_conf: "{{ test_conf_raw.content | b64decode }}"
+        test_priority: "{{ 150 - 10 * groups['web'].index(inventory_hostname) }}"
+      ansible.builtin.assert:
+        that:
+          - test_conf is search('script_user keepalived_script')
+          - test_conf is search('enable_script_security')
+          - test_conf is search('vrrp_instance web {')
+          - test_conf is search('vrrp_instance web_tcp {')
+          - test_conf is search('priority ' ~ test_priority)
+          - test_conf is search('nopreempt')
+          - test_conf is search('ansible-keepalived-check http http://')
+          - test_conf is search('ansible-keepalived-check tcp ')
+          - (test_conf is search('unicast_peer')) == (keepalived_unicast | bool)
+
+    - name: Read the health check helper
+      ansible.builtin.stat:
+        path: /usr/libexec/keepalived/ansible-keepalived-check
+      register: test_helper
+
+    - name: Check the helper belongs to root and only root can change it
+      ansible.builtin.assert:
+        that:
+          - test_helper.stat.exists
+          - test_helper.stat.pw_name == 'root'
+          - test_helper.stat.mode == '0755'
+
+    - name: Run the checks as the script user
+      ansible.builtin.command:
+        argv: [runuser, -u, keepalived_script, --, /usr/libexec/keepalived/ansible-keepalived-check, tcp, 127.0.0.1, "{{ test_web_port }}", "3"]
+      changed_when: false
+
+    - name: List the host's addresses
+      ansible.builtin.command:
+        cmd: ip -o addr show
+      register: test_addrs
+      changed_when: false
+
+    - name: Check each address is held by exactly one host
+      vars:
+        test_holders: >-
+          {{ ansible_play_hosts | map('extract', hostvars, ['test_addrs', 'stdout']) | zip(ansible_play_hosts) | list }}
+      ansible.builtin.assert:
+        that:
+          - test_holders | selectattr(0, 'search', ' ' ~ item ~ '/') | list | length == 1
+        fail_msg: "{{ item }} is held by {{ test_holders | selectattr(0, 'search', ' ' ~ item ~ '/') | map(attribute=1) | list }}"
+      loop:
+        - "{{ test_vip_web }}"
+        - "{{ test_vip_tcp }}"
+      run_once: true
+
+- name: Verify from the client
+  hosts: client
+  gather_facts: false
+  tasks:
+    - name: Fetch the page through each address
+      ansible.builtin.uri:
+        url: "http://{{ item }}:{{ test_web_port }}/index.html"
+        return_content: true
+      register: test_pages
+      loop:
+        - "{{ test_vip_web }}"
+        - "{{ test_vip_tcp }}"
+
+    - name: Check the host holding the addresses answered
+      ansible.builtin.assert:
+        that:
+          - test_pages.results | map(attribute='content') | map('trim') | unique | list | length == 1
+          - (test_pages.results[0].content | trim) in groups['web']

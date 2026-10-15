@@ -1,0 +1,11 @@
+---
+profile: production
+
+exclude_paths:
+  - .ansible/
+  - .github/
+
+# examples/playbook.yml applies the role by the name it is installed under from
+# examples/requirements.yml, which is not present here.
+mock_roles:
+  - keepalived

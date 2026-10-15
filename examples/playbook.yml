@@ -1,0 +1,11 @@
+---
+# Run after the services behind the addresses are deployed: an address only
+# stays on a host whose health check passes.
+- name: Deploy keepalived
+  hosts: kibana:logstash:fleet_server
+  become: true
+  gather_facts: true
+  # Stop the whole run if any host fails validation, before anything changes.
+  any_errors_fatal: true
+  roles:
+    - role: keepalived

@@ -1,0 +1,21 @@
+---
+- name: Configure | Set the daemon options
+  ansible.builtin.template:
+    src: sysconfig.j2
+    dest: /etc/sysconfig/keepalived
+    owner: root
+    group: root
+    mode: "0644"
+  register: _ka_sysconfig
+
+# keepalived's own configuration test checks the file before it replaces the
+# running one, including the interfaces and the health check scripts.
+- name: Configure | Render keepalived.conf
+  ansible.builtin.template:
+    src: keepalived.conf.j2
+    dest: "{{ _ka_conf_file }}"
+    owner: root
+    group: root
+    mode: "0640"
+    validate: /usr/sbin/keepalived --config-test -f %s
+  register: _ka_config

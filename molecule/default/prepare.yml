@@ -1,0 +1,43 @@
+---
+# A web server on each web host that answers with the host's name, so the
+# client can tell which host holds an address. side_effect.yml stops it to
+# make a host fail its check.
+- name: Start a web server on the web hosts
+  hosts: web
+  gather_facts: false
+  tasks:
+    - name: Create the web root
+      ansible.builtin.file:
+        path: /srv/www
+        state: directory
+        mode: "0755"
+
+    - name: Write the page
+      ansible.builtin.copy:
+        dest: /srv/www/index.html
+        content: "{{ inventory_hostname }}\n"
+        mode: "0644"
+
+    - name: Install the web server unit
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/molecule-web.service
+        content: |
+          [Unit]
+          Description=Molecule test web server
+          [Service]
+          ExecStart=/usr/bin/python3 -m http.server {{ test_web_port }} --directory /srv/www
+          [Install]
+          WantedBy=multi-user.target
+        mode: "0644"
+
+    - name: Start the web server
+      ansible.builtin.systemd_service:
+        name: molecule-web
+        state: started
+        enabled: true
+        daemon_reload: true
+
+    - name: Wait for the web server
+      ansible.builtin.wait_for:
+        port: "{{ test_web_port }}"
+        timeout: 30

@@ -1,0 +1,71 @@
+# {{ ansible_managed }}
+# One vrrp_instance per entry in keepalived_instances. Every instance starts as
+# BACKUP; the highest priority among the healthy hosts holds the address.
+
+global_defs {
+    router_id {{ keepalived_router_id }}
+    vrrp_version {{ keepalived_vrrp_version }}
+    # Health checks run as an unprivileged user, and only from paths root owns.
+    enable_script_security
+    script_user {{ keepalived_script_user }}
+{% for line in keepalived_global_defs_extra %}
+    {{ line }}
+{% endfor %}
+}
+{% for i in _ka_final %}
+{%   set c = i.check %}
+{%   if c.type != 'none' %}
+
+vrrp_script chk_{{ i.name }} {
+{%     if c.type == 'script' %}
+    script "{{ c.command }}"
+{%     else %}
+{%       set host = c.host | default(i.local_address, true) | string %}
+{%       if c.type == 'tcp' %}
+    script "{{ _ka_check_helper }} tcp {{ host }} {{ c.port }} {{ c.timeout }}"
+{%       else %}
+{%         set url = c.type ~ '://' ~ (('[' ~ host ~ ']') if ':' in host else host) ~ ':' ~ c.port ~ c.path %}
+{%         if c.type == 'https' and not c.validate_certs | bool %}
+{%           set tls = ' insecure' %}
+{%         elif c.type == 'https' and c.ca_path | length > 0 %}
+{%           set tls = ' ' ~ c.ca_path %}
+{%         else %}
+{%           set tls = '' %}
+{%         endif %}
+    script "{{ _ka_check_helper }} http {{ url }} {{ c.timeout }}{{ tls }}"
+{%       endif %}
+{%     endif %}
+    interval {{ c.interval }}
+    timeout {{ c.timeout | int + 1 }}
+    fall {{ c.fall }}
+    rise {{ c.rise }}
+}
+{%   endif %}
+
+vrrp_instance {{ i.name }} {
+    state BACKUP
+    interface {{ i.interface }}
+    virtual_router_id {{ i.virtual_router_id }}
+    priority {{ i.priority }}
+    advert_int {{ i.advert_int }}
+{%   if not i.preempt | bool %}
+    nopreempt
+{%   endif %}
+{%   if keepalived_unicast | bool %}
+    unicast_src_ip {{ i.local_address }}
+    unicast_peer {
+{%     for p in i.peers %}
+        {{ p.address }}
+{%     endfor %}
+    }
+{%   endif %}
+    virtual_ipaddress {
+        {{ i.address }} dev {{ i.interface }}
+    }
+{%   if c.type != 'none' %}
+    track_script {
+        chk_{{ i.name }}
+    }
+{%   endif %}
+}
+{% endfor %}
