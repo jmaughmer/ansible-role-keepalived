@@ -1,0 +1,238 @@
+---
+# Each case runs the role's facts and preflight tasks (nothing is installed)
+# and states which check must refuse it, on which hosts, and how:
+#   task     name of the preflight task that must fail, without its
+#            "Preflight | " prefix; empty means every check must pass
+#   expect   regex the failure message has to match
+#   fail_on  hosts that must fail (default: every host)
+#   run_once true for a check that runs once for all hosts: every host must
+#            fail, but only the first knows which task failed and why
+#   hosts    hosts the case runs on (default: web)
+#
+# Each case is a play of its own. Some checks compare the hosts with each
+# other, so both hosts have to run the case together; a play guarantees that,
+# a looped include does not once one host has failed and the other not.
+
+- name: Valid settings pass
+  ansible.builtin.import_playbook: case.yml
+  vars:
+    test_case:
+      name: valid settings pass
+      task: ""
+
+- name: Valid unicast settings pass
+  ansible.builtin.import_playbook: case.yml
+  vars:
+    test_case:
+      name: valid unicast settings pass
+      unicast: true
+      task: ""
+
+- name: Unsupported distribution
+  ansible.builtin.import_playbook: case.yml
+  vars:
+    test_case:
+      name: distribution not in keepalived_supported_distributions
+      distributions: [RedHat]
+      task: Verify operating system is supported
+      expect: Unsupported platform
+
+- name: No addresses
+  ansible.builtin.import_playbook: case.yml
+  vars:
+    test_case:
+      name: empty keepalived_instances
+      instances: []
+      task: Verify keepalived_instances is a list of addresses
+      expect: must be a non-empty list of mappings
+
+- name: Addresses that are not a list
+  ansible.builtin.import_playbook: case.yml
+  vars:
+    test_case:
+      name: keepalived_instances given as a mapping
+      instances: "{{ test_instances[0] }}"
+      task: Verify keepalived_instances is a list of addresses
+      expect: must be a non-empty list of mappings
+
+- name: Check that is not a mapping
+  ansible.builtin.import_playbook: case.yml
+  vars:
+    test_case:
+      name: check given as a string
+      instances: [{name: web, address: 192.0.2.10/24, virtual_router_id: 51, check: tcp}]
+      task: Verify keepalived_instances is a list of addresses
+      expect: a `check` that is a mapping
+
+- name: Name with a space
+  ansible.builtin.import_playbook: case.yml
+  vars:
+    test_case:
+      name: instance name with a space
+      instances: [{name: my web, address: 192.0.2.10/24, virtual_router_id: 51, check: "{{ test_check }}"}]
+      task: Verify each address
+      expect: "Instance 'my web': name must be"
+
+- name: Address that is not one
+  ansible.builtin.import_playbook: case.yml
+  vars:
+    test_case:
+      name: IPv4 address out of range
+      instances: [{name: web, address: 192.0.2.300/24, virtual_router_id: 51, check: "{{ test_check }}"}]
+      task: Verify each address
+      expect: must be an IPv4 or IPv6 address
+
+- name: Virtual router id out of range
+  ansible.builtin.import_playbook: case.yml
+  vars:
+    test_case:
+      name: virtual_router_id 256
+      instances: [{name: web, address: 192.0.2.10/24, virtual_router_id: 256, check: "{{ test_check }}"}]
+      task: Verify each address
+      expect: virtual_router_id \('256'\) must be 1-255
+
+- name: Unknown interface
+  ansible.builtin.import_playbook: case.yml
+  vars:
+    test_case:
+      name: interface the host does not have
+      instances: [{name: web, address: 192.0.2.10/24, virtual_router_id: 51, interface: bond9, check: "{{ test_check }}"}]
+      task: Verify each address's interface and source address
+      expect: interface 'bond9' must exist
+
+- name: IPv6 address with VRRP version 2
+  ansible.builtin.import_playbook: case.yml
+  vars:
+    test_case:
+      name: IPv6 address with keepalived_vrrp_version 2
+      instances: [{name: web, address: "2001:db8::10/64", virtual_router_id: 51, check: "{{ test_check }}"}]
+      vrrp_version: 2
+      task: Verify VRRP settings
+      expect: IPv6 addresses need 3
+
+- name: Host outside the instance's group
+  ansible.builtin.import_playbook: case.yml
+  vars:
+    test_case:
+      name: instance group that leaves kap-2 out
+      instances: [{name: web, address: 192.0.2.10/24, virtual_router_id: 51, group: other, check: "{{ test_check }}"}]
+      fail_on: "{{ groups['web'] | difference(groups['other']) }}"
+      task: Verify each address's group and priority
+      expect: must be in its inventory group 'other'
+
+- name: Priority out of range
+  ansible.builtin.import_playbook: case.yml
+  vars:
+    test_case:
+      name: keepalived_priority 300
+      priority: 300
+      task: Verify each address's group and priority
+      expect: priority \(300\) must be 1-254
+
+- name: Unknown check type
+  ansible.builtin.import_playbook: case.yml
+  vars:
+    test_case:
+      name: check type ping
+      instances: [{name: web, address: 192.0.2.10/24, virtual_router_id: 51, check: {type: ping}}]
+      task: Verify each health check
+      expect: check.type must be one of
+
+- name: TCP check without a port
+  ansible.builtin.import_playbook: case.yml
+  vars:
+    test_case:
+      name: tcp check without a port
+      instances: [{name: web, address: 192.0.2.10/24, virtual_router_id: 51, check: {type: tcp}}]
+      task: Verify each health check
+      expect: need a port
+
+- name: Script check without a command
+  ansible.builtin.import_playbook: case.yml
+  vars:
+    test_case:
+      name: script check without a command
+      instances: [{name: web, address: 192.0.2.10/24, virtual_router_id: 51, check: {type: script}}]
+      task: Verify each health check
+      expect: script needs a command
+
+- name: HTTP path with a space
+  ansible.builtin.import_playbook: case.yml
+  vars:
+    test_case:
+      name: http check path with a space
+      instances: [{name: web, address: 192.0.2.10/24, virtual_router_id: 51, check: {type: http, port: 80, path: /a b}}]
+      task: Verify each health check
+      expect: cannot hold spaces
+
+- name: Two addresses with one id on a host
+  ansible.builtin.import_playbook: case.yml
+  vars:
+    test_case:
+      name: two instances sharing a virtual_router_id on one host
+      instances: ["{{ test_alpha }}", "{{ test_beta }}"]
+      task: Verify addresses do not clash on this host
+      expect: its own virtual_router_id
+
+- name: Hosts that disagree on an address
+  ansible.builtin.import_playbook: case.yml
+  vars:
+    test_case:
+      name: one instance with a different address on each host
+      instances:
+        - name: web
+          address: "{{ '192.0.2.10/24' if inventory_hostname == test_first else '192.0.2.20/24' }}"
+          virtual_router_id: 51
+          check: "{{ test_check }}"
+      run_once: true
+      task: Verify hosts sharing an address agree on it
+      expect: "differ between the hosts that list them: web"
+
+- name: Different addresses with one id across hosts
+  ansible.builtin.import_playbook: case.yml
+  vars:
+    test_case:
+      name: two instances on different hosts sharing a virtual_router_id
+      instances: "{{ [test_alpha] if inventory_hostname == test_first else [test_beta] }}"
+      run_once: true
+      task: Verify different addresses do not share an id or an address
+      expect: must not share a virtual_router_id
+
+- name: Equal priorities
+  ansible.builtin.import_playbook: case.yml
+  vars:
+    test_case:
+      name: the same keepalived_priority on both hosts
+      priority: 100
+      run_once: true
+      task: Verify every host sharing an address has its own priority
+      expect: "web \\(100, 100\\)"
+
+- name: Unicast peer without an address
+  ansible.builtin.import_playbook: case.yml
+  vars:
+    test_case:
+      name: unicast with a group member that was never contacted
+      hosts: kap-1
+      instances: [{name: web, address: 192.0.2.10/24, virtual_router_id: 51, group: ghostly, check: "{{ test_check }}"}]
+      unicast: true
+      task: Verify unicast peers have an address
+      expect: "Missing for: kap-ghost"
+
+- name: Firewall port without a protocol
+  ansible.builtin.import_playbook: case.yml
+  vars:
+    test_case:
+      name: firewall port without a protocol
+      firewall_ports: ["5601"]
+      task: Verify settings
+      expect: keepalived_firewall_ports entries must look like
+
+- name: Unknown fapolicyd setting
+  ansible.builtin.import_playbook: case.yml
+  vars:
+    test_case:
+      name: keepalived_fapolicyd_trust that is not auto, true or false
+      fapolicyd_trust: maybe
+      task: Verify settings
+      expect: keepalived_fapolicyd_trust must be auto, true or false

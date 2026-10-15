@@ -1,0 +1,72 @@
+---
+# The default scenario with keepalived_unicast: advertisements go to the other
+# host's address instead of the VRRP multicast group. Same hosts, sequence,
+# playbooks and inventory, all taken from ../default/; the inventory turns
+# unicast on from MOLECULE_KEEPALIVED_UNICAST.
+#   molecule test -s unicast
+role_name_check: 1
+
+dependency:
+  name: galaxy
+  options:
+    requirements-file: ${MOLECULE_SCENARIO_DIRECTORY}/../default/requirements.yml
+
+driver:
+  name: podman
+
+platforms:
+  - name: ka-1
+    image: "docker.io/geerlingguy/docker-${MOLECULE_DISTRO:-rockylinux9}-ansible:latest"
+    pre_build_image: true
+    override_command: false   # keep the image's own CMD: systemd as PID 1
+    systemd: always
+    capabilities: [NET_ADMIN, NET_RAW]
+    network: keepalived_unicast   # created by the driver from the first platform
+    groups: [web]
+
+  - name: ka-2
+    image: "docker.io/geerlingguy/docker-${MOLECULE_DISTRO:-rockylinux9}-ansible:latest"
+    pre_build_image: true
+    override_command: false
+    systemd: always
+    capabilities: [NET_ADMIN, NET_RAW]
+    network: keepalived_unicast
+    groups: [web]
+
+  - name: ka-client
+    image: "docker.io/geerlingguy/docker-${MOLECULE_DISTRO:-rockylinux9}-ansible:latest"
+    pre_build_image: true
+    override_command: false
+    systemd: always
+    network: keepalived_unicast
+    groups: [client]
+
+provisioner:
+  name: ansible
+  env:
+    MOLECULE_KEEPALIVED_UNICAST: "true"
+  playbooks:
+    prepare: ../default/prepare.yml
+    converge: ../default/converge.yml
+    side_effect: ../default/side_effect.yml
+    verify: ../default/verify.yml
+  inventory:
+    links:
+      group_vars: ../default/inventory/group_vars/
+
+verifier:
+  name: ansible
+
+scenario:
+  test_sequence:
+    - dependency
+    - destroy
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - check
+    - side_effect
+    - verify
+    - destroy

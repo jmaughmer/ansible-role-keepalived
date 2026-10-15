@@ -1,0 +1,91 @@
+---
+# Resolves keepalived_instances into _ka_resolved (defaults applied, published
+# for the other hosts), then into _ka_final (group members, priority, unicast
+# peers), which needs every host's _ka_resolved. Two facts, because one host's
+# second pass must not read another host's fact while that host rewrites it.
+- name: Facts | Gather network facts
+  ansible.builtin.setup:
+    gather_subset: [min, network]
+  when: ansible_facts['default_ipv4'] is not defined or ansible_facts['interfaces'] is not defined
+
+# Facts outlive the play, so start from nothing.
+- name: Facts | Reset the resolved instances
+  ansible.builtin.set_fact:
+    _ka_resolved: []
+    _ka_names: []
+    _ka_final: []
+
+- name: Facts | Resolve each instance
+  ansible.builtin.set_fact:
+    _ka_resolved: "{{ _ka_resolved + [_ka_item] }}"
+  # Preflight reports a keepalived_instances that is not a list.
+  loop: "{{ keepalived_instances if keepalived_instances is sequence and keepalived_instances is not string and keepalived_instances is not mapping else [] }}"
+  loop_control:
+    loop_var: _ka_instance
+    label: "{{ _ka_instance.name | default('?') }}"
+  vars:
+    _ka_name: "{{ _ka_instance.name | default('') | string }}"
+    _ka_address: "{{ _ka_instance.address | default('') | string }}"
+    _ka_check: "{{ _ka_instance.check | default({}) }}"
+    _ka_family: "{{ 'inet6' if ':' in _ka_address else 'inet' }}"
+    _ka_if: "{{ _ka_instance.interface | default(keepalived_interface, true) | string }}"
+    _ka_if_facts: >-
+      {{ ansible_facts[_ka_if | replace(':', '_')]
+         | default(ansible_facts[_ka_if | replace(':', '_') | replace('-', '_')] | default({})) }}
+    _ka_if_address: >-
+      {{ (_ka_if_facts.ipv4.address | default(''))
+         if _ka_family == 'inet'
+         else (_ka_if_facts.ipv6 | default([]) | selectattr('scope', 'equalto', 'global')
+               | map(attribute='address') | first | default('')) }}
+    _ka_group: >-
+      {{ _ka_instance.group | default(_ka_name if _ka_name in groups else '', true) | string }}
+    _ka_item:
+      name: "{{ _ka_name }}"
+      address: "{{ _ka_address }}"
+      vip: "{{ _ka_address.split('/') | first }}"
+      family: "{{ _ka_family }}"
+      virtual_router_id: "{{ _ka_instance.virtual_router_id | default('') }}"
+      interface: "{{ _ka_if }}"
+      group: "{{ _ka_group }}"
+      priority: "{{ _ka_instance.priority | default(keepalived_priority, true) }}"
+      preempt: "{{ _ka_instance.preempt | default(keepalived_preempt) | bool }}"
+      advert_int: "{{ _ka_instance.advert_int | default(keepalived_advert_int) }}"
+      check: "{{ keepalived_check_defaults | combine(_ka_check if _ka_check is mapping else {}) }}"
+      local_address: "{{ keepalived_unicast_src_ip | default(_ka_if_address, true) }}"
+
+- name: Facts | Publish the instance names
+  ansible.builtin.set_fact:
+    _ka_names: "{{ _ka_resolved | map(attribute='name') | list }}"
+
+- name: Facts | Work out group members, priorities and peers
+  ansible.builtin.set_fact:
+    _ka_final: "{{ _ka_final + [_ka_item | combine({'members': _ka_members, 'priority': _ka_priority, 'peers': _ka_peers})] }}"
+  loop: "{{ _ka_resolved }}"
+  loop_control:
+    loop_var: _ka_item
+    label: "{{ _ka_item.name }}"
+  vars:
+    # The hosts that share the address: its inventory group, or the hosts in
+    # the play that list it.
+    _ka_listers: >-
+      {%- set found = [] -%}
+      {%- for h in ansible_play_hosts_all -%}
+      {%- if (hostvars[h]._ka_resolved | default([]) | selectattr('name', 'equalto', _ka_item.name) | list | length) > 0 -%}
+      {%- set _ = found.append(h) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ found }}
+    _ka_members: "{{ (groups[_ka_item.group] | default([])) if _ka_item.group | length > 0 else _ka_listers }}"
+    _ka_priority: >-
+      {{ (_ka_item.priority | int) if (_ka_item.priority | string | length) > 0
+         else (keepalived_priority_base | int
+               - keepalived_priority_step | int * (_ka_members.index(inventory_hostname) if inventory_hostname in _ka_members else 0)) }}
+    # Each peer's address: what it resolved for this instance when it is in the
+    # play, else its keepalived_unicast_src_ip from the inventory.
+    _ka_peers: >-
+      {%- set found = [] -%}
+      {%- for h in _ka_members if h != inventory_hostname -%}
+      {%- set own = hostvars[h]._ka_resolved | default([]) | selectattr('name', 'equalto', _ka_item.name) | map(attribute='local_address') | list -%}
+      {%- set _ = found.append({'host': h, 'address': (own | first) if own | length > 0 else (hostvars[h].keepalived_unicast_src_ip | default(''))}) -%}
+      {%- endfor -%}
+      {{ found }}

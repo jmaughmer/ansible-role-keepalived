@@ -1,0 +1,262 @@
+---
+- name: Preflight | Verify operating system is supported
+  ansible.builtin.assert:
+    that:
+      - keepalived_supported_distributions is sequence
+      - keepalived_supported_distributions is not string
+      - ansible_facts['os_family'] == 'RedHat'
+      - ansible_facts['distribution'] in keepalived_supported_distributions
+      - ansible_facts['distribution_major_version'] in ['9', '10']
+    fail_msg: >-
+      Unsupported platform {{ ansible_facts['distribution'] }}
+      {{ ansible_facts['distribution_version'] }}. Supported: major version 9 or 10 of
+      {{ keepalived_supported_distributions | join(', ') }} (keepalived_supported_distributions).
+    quiet: true
+
+- name: Preflight | Verify keepalived_instances is a list of addresses
+  ansible.builtin.assert:
+    that:
+      - keepalived_instances is sequence
+      - keepalived_instances is not string
+      - keepalived_instances is not mapping
+      - keepalived_instances | length > 0
+      - keepalived_instances | reject('mapping') | list | length == 0
+      - keepalived_instances | selectattr('check', 'defined') | map(attribute='check') | reject('mapping') | list | length == 0
+    fail_msg: >-
+      keepalived_instances must be a non-empty list of mappings, each with at least name, address
+      and virtual_router_id, and a `check` that is a mapping too; {{ inventory_hostname }} has
+      {{ keepalived_instances | to_json if keepalived_instances is not none else 'none' }}.
+    quiet: true
+
+- name: Preflight | Verify VRRP settings
+  ansible.builtin.assert:
+    that:
+      - keepalived_vrrp_version | string in ['2', '3']
+      - keepalived_vrrp_version | string == '3' or _ka_instances | selectattr('family', 'equalto', 'inet6') | list | length == 0
+      - keepalived_priority_base | string is match('^[0-9]+$')
+      - keepalived_priority_step | string is match('^[0-9]+$')
+      - keepalived_priority | string | length == 0 or keepalived_priority | string is match('^[0-9]+$')
+      - keepalived_preempt | string | lower in ['true', 'false']
+      - keepalived_unicast | string | lower in ['true', 'false']
+      - keepalived_nonlocal_bind | string | lower in ['true', 'false']
+      - keepalived_router_id | string | length > 0
+    fail_msg: >-
+      keepalived_vrrp_version must be 2 or 3 (IPv6 addresses need 3); keepalived_priority_base,
+      keepalived_priority_step and keepalived_priority (if set) must be whole numbers;
+      keepalived_preempt, keepalived_unicast and keepalived_nonlocal_bind must be true or false;
+      keepalived_router_id must not be empty.
+    quiet: true
+
+- name: Preflight | Verify each address
+  ansible.builtin.assert:
+    that:
+      - item.name is match(_ka_name_re)
+      - item.address is match(_ka_ipv4_re) or item.address is match(_ka_ipv6_re)
+      - item.virtual_router_id | string is match('^[0-9]+$')
+      - item.virtual_router_id | int >= 1
+      - item.virtual_router_id | int <= 255
+      - item.advert_int | string is match('^[0-9]+([.][0-9]+)?$')
+      - item.advert_int | float > 0
+    fail_msg: >-
+      Instance '{{ item.name }}': name must be letters, digits, _ . or -; address
+      ('{{ item.address }}') must be an IPv4 or IPv6 address with an optional prefix length, such as
+      192.0.2.10/24; virtual_router_id ('{{ item.virtual_router_id }}') must be 1-255; advert_int
+      ('{{ item.advert_int }}') must be a positive number of seconds.
+    quiet: true
+  loop: "{{ _ka_instances }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Preflight | Verify each address's interface and source address
+  ansible.builtin.assert:
+    that:
+      - item.interface in ansible_facts['interfaces'] | default([])
+      - item.local_address | length > 0
+    fail_msg: >-
+      Instance '{{ item.name }}': interface '{{ item.interface }}' must exist on
+      {{ inventory_hostname }} ({{ ansible_facts['interfaces'] | default([]) | join(', ') }}) and have an
+      {{ 'IPv6 global' if item.family == 'inet6' else 'IPv4' }} address of its own, or set
+      keepalived_unicast_src_ip. Set `interface` on the instance or keepalived_interface.
+    quiet: true
+  loop: "{{ _ka_instances }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Preflight | Verify each address's group and priority
+  ansible.builtin.assert:
+    that:
+      - item.group | length == 0 or item.group in groups
+      - item.group | length == 0 or inventory_hostname in item.members
+      - item.priority | string is match('^[0-9]+$')
+      - item.priority | int >= 1
+      - item.priority | int <= 254
+    fail_msg: >-
+      Instance '{{ item.name }}': {{ inventory_hostname }} must be in its inventory group
+      '{{ item.group }}', which has to exist; its priority ({{ item.priority }}) must be 1-254. With
+      many hosts in the group, lower keepalived_priority_step or raise keepalived_priority_base.
+    quiet: true
+  loop: "{{ _ka_final }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Preflight | Verify each health check
+  ansible.builtin.assert:
+    that:
+      - item.check.type in _ka_check_types
+      - item.check.type not in _ka_port_check_types or item.check.port | default('') | string is match('^[0-9]+$')
+      - item.check.type not in _ka_port_check_types or (item.check.port | int >= 1 and item.check.port | int <= 65535)
+      - item.check.type != 'script' or item.check.command | default('') | string | length > 0
+      - item.check.type != 'script' or '"' not in item.check.command | default('') | string
+      - item.check.interval | string is match('^[0-9]+$') and item.check.interval | int >= 1
+      - item.check.timeout | string is match('^[0-9]+$') and item.check.timeout | int >= 1
+      - item.check.fall | string is match('^[0-9]+$') and item.check.fall | int >= 1
+      - item.check.rise | string is match('^[0-9]+$') and item.check.rise | int >= 1
+      - item.check.path | string is match('^/')
+      - (item.check.host | default('') | string ~ item.check.path | string ~ item.check.ca_path | string) is not search('[ "]')
+      - item.check.validate_certs | string | lower in ['true', 'false']
+    fail_msg: >-
+      Instance '{{ item.name }}': check.type must be one of {{ _ka_check_types | join(', ') }}
+      (got '{{ item.check.type }}'); tcp, http and https need a port (1-65535); script needs a command
+      without double quotes; interval, timeout, fall and rise must be whole numbers of at least 1;
+      path must start with /; host, path and ca_path cannot hold spaces or double quotes;
+      validate_certs must be true or false.
+    quiet: true
+  loop: "{{ _ka_instances }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Preflight | Verify addresses do not clash on this host
+  vars:
+    _ka_vrid_keys: >-
+      {{ _ka_instances | map(attribute='interface')
+         | zip(_ka_instances | map(attribute='family'), _ka_instances | map(attribute='virtual_router_id') | map('string'))
+         | map('join', '/') | list }}
+  ansible.builtin.assert:
+    that:
+      - _ka_instances | map(attribute='name') | unique | length == _ka_instances | length
+      - _ka_instances | map(attribute='vip') | unique | length == _ka_instances | length
+      - _ka_vrid_keys | unique | length == _ka_vrid_keys | length
+    fail_msg: >-
+      Each address on {{ inventory_hostname }} needs its own name, address and, per interface and
+      address family, its own virtual_router_id. Names: {{ _ka_instances | map(attribute='name') | join(', ') }};
+      addresses: {{ _ka_instances | map(attribute='vip') | join(', ') }}; interface/family/id:
+      {{ _ka_vrid_keys | join(', ') }}.
+    quiet: true
+
+- name: Preflight | Verify settings
+  ansible.builtin.assert:
+    that:
+      - keepalived_firewall_ports is sequence
+      - keepalived_firewall_ports is not string
+      - keepalived_firewall_ports | reject('match', _ka_firewall_port_re) | list | length == 0
+      - keepalived_fapolicyd_trust | string | lower in ['auto', 'true', 'false']
+      - keepalived_wait_for_address | string | lower in ['true', 'false']
+      - keepalived_wait_timeout | string is match('^[0-9]+$')
+      - keepalived_global_defs_extra is sequence
+      - keepalived_global_defs_extra is not string
+    fail_msg: >-
+      keepalived_firewall_ports entries must look like 5601/tcp or 5044-5045/tcp;
+      keepalived_fapolicyd_trust must be auto, true or false; keepalived_wait_for_address true or
+      false; keepalived_wait_timeout a number of seconds; keepalived_global_defs_extra a list of lines.
+    quiet: true
+
+# ---------------------------------------------------------------------------
+# Every host that shares an address has to agree on it.
+# ---------------------------------------------------------------------------
+- name: Preflight | Verify hosts sharing an address agree on it
+  vars:
+    _ka_all: "{{ ansible_play_hosts | map('extract', hostvars, '_ka_resolved') | map('default', []) | flatten }}"
+    _ka_disagree: >-
+      {%- set found = [] -%}
+      {%- for i in _ka_play_instances -%}
+      {%- set same = _ka_all | selectattr('name', 'equalto', i.name) | list -%}
+      {%- if (same | map(attribute='address') | unique | list | length) > 1
+            or (same | map(attribute='virtual_router_id') | map('string') | unique | list | length) > 1
+            or (same | map(attribute='group') | unique | list | length) > 1 -%}
+      {%- set _ = found.append(i.name) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ found }}
+  ansible.builtin.assert:
+    that:
+      - _ka_disagree | length == 0
+    fail_msg: >-
+      These instances differ between the hosts that list them: {{ _ka_disagree | join(', ') }}.
+      Every host has to give an instance the same address, virtual_router_id and group.
+    quiet: true
+  run_once: true
+
+- name: Preflight | Verify different addresses do not share an id or an address
+  vars:
+    _ka_vrid_keys: >-
+      {{ _ka_play_instances | map(attribute='family')
+         | zip(_ka_play_instances | map(attribute='virtual_router_id') | map('string'))
+         | map('join', '/') | list }}
+  ansible.builtin.assert:
+    that:
+      - _ka_vrid_keys | unique | length == _ka_vrid_keys | length
+      - _ka_play_instances | map(attribute='vip') | unique | length == _ka_play_instances | length
+    fail_msg: >-
+      Different instances must not share a virtual_router_id (per address family) or an address,
+      since hosts on one network would take them for the same one. Instances:
+      {% for i in _ka_play_instances %}{{ i.name }}={{ i.address }} id {{ i.virtual_router_id }}{{ '; ' if not loop.last }}{% endfor %}.
+    quiet: true
+  run_once: true
+
+- name: Preflight | Verify a limited run keeps priorities and peers
+  ansible.builtin.assert:
+    that:
+      - _ka_play_instances | selectattr('group', 'equalto', '') | list | length == 0
+    fail_msg: >-
+      This run is limited (--limit {{ ansible_limit }}), and these instances have no inventory group:
+      {{ _ka_play_instances | selectattr('group', 'equalto', '') | map(attribute='name') | join(', ') }}.
+      Their priorities and peers come from the hosts in the play, so they would change. Set `group`
+      on them, run without --limit, or set keepalived_allow_limit: true.
+    quiet: true
+  run_once: true
+  when:
+    - ansible_limit is defined
+    - not (keepalived_allow_limit | bool)
+
+- name: Preflight | Verify every host sharing an address has its own priority
+  vars:
+    _ka_clashes: >-
+      {%- set found = [] -%}
+      {%- for i in _ka_play_instances -%}
+      {%- set prio = [] -%}
+      {%- for h in ansible_play_hosts -%}
+      {%- for f in hostvars[h]._ka_final | default([]) | selectattr('name', 'equalto', i.name) if h in f.members -%}
+      {%- set _ = prio.append(f.priority | string) -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {%- if (prio | unique | list | length) < (prio | length) -%}
+      {%- set _ = found.append(i.name ~ ' (' ~ (prio | join(', ')) ~ ')') -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ found }}
+  ansible.builtin.assert:
+    that:
+      - _ka_clashes | length == 0
+    fail_msg: >-
+      Hosts sharing an address must have different priorities, or the first election is decided by
+      their IP addresses: {{ _ka_clashes | join('; ') }}. Remove keepalived_priority from all but one
+      host, or give each its own.
+    quiet: true
+  run_once: true
+
+- name: Preflight | Verify unicast peers have an address
+  ansible.builtin.assert:
+    that:
+      - item.peers | length > 0
+      - item.peers | selectattr('address', 'equalto', '') | list | length == 0
+    fail_msg: >-
+      Instance '{{ item.name }}' on {{ inventory_hostname }}: with keepalived_unicast every other host
+      sharing the address needs an address to send to, and there has to be one
+      (members: {{ item.members | join(', ') }}). Missing for:
+      {{ item.peers | selectattr('address', 'equalto', '') | map(attribute='host') | join(', ') | default('-', true) }}.
+      Run with those hosts in the play, or set keepalived_unicast_src_ip in their host_vars.
+    quiet: true
+  loop: "{{ _ka_final }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: keepalived_unicast | bool

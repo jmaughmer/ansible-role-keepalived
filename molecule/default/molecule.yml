@@ -1,0 +1,74 @@
+---
+# Three systemd containers (rootless Podman is fine) on one network:
+#   ka-1, ka-2   the inventory group "web", which the role is applied to; each
+#                runs a small web server on port 8080 (prepare.yml)
+#   ka-client    reaches the web servers through the virtual addresses
+# MOLECULE_DISTRO picks the EL release (default rockylinux9; also
+# rockylinux10). The playbooks and inventory here are shared with the other
+# scenarios. Ansible connects as root, so the playbooks do not use become: sudo
+# fails under PAM in rootless Podman containers.
+#
+# keepalived adds the addresses inside the containers, which needs NET_ADMIN,
+# and sends VRRP over a raw socket (NET_RAW). Inside containers SELinux is off
+# and firewalld isn't installed, so this exercises the role's skip paths for
+# both.
+#
+# The sequence adds `check` (converge in check mode on the converged hosts)
+# after the idempotence check, and side_effect.yml (failover) before verify.
+role_name_check: 1
+
+dependency:
+  name: galaxy   # installs requirements.yml next to this file
+
+driver:
+  name: podman
+
+platforms:
+  - name: ka-1
+    image: "docker.io/geerlingguy/docker-${MOLECULE_DISTRO:-rockylinux9}-ansible:latest"
+    pre_build_image: true
+    override_command: false   # keep the image's own CMD: systemd as PID 1
+    systemd: always
+    capabilities: [NET_ADMIN, NET_RAW]
+    network: keepalived_molecule   # created by the driver from the first platform
+    groups: [web]
+
+  - name: ka-2
+    image: "docker.io/geerlingguy/docker-${MOLECULE_DISTRO:-rockylinux9}-ansible:latest"
+    pre_build_image: true
+    override_command: false
+    systemd: always
+    capabilities: [NET_ADMIN, NET_RAW]
+    network: keepalived_molecule
+    groups: [web]
+
+  - name: ka-client
+    image: "docker.io/geerlingguy/docker-${MOLECULE_DISTRO:-rockylinux9}-ansible:latest"
+    pre_build_image: true
+    override_command: false
+    systemd: always
+    network: keepalived_molecule
+    groups: [client]
+
+provisioner:
+  name: ansible
+  inventory:
+    links:
+      group_vars: inventory/group_vars/
+
+verifier:
+  name: ansible
+
+scenario:
+  test_sequence:
+    - dependency
+    - destroy
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - check
+    - side_effect
+    - verify
+    - destroy

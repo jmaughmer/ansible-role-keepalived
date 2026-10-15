@@ -1,0 +1,12 @@
+---
+# fleet.example.com resolves to 192.0.2.12 and is in elastic_fleet_public_urls
+# and the Fleet Server certificates.
+keepalived_instances:
+  - name: fleet_server
+    address: 192.0.2.12/24
+    virtual_router_id: 53
+    # Fleet Server's /api/status answers 200 only while it is HEALTHY.
+    check:
+      type: https
+      port: 8220
+      path: /api/status

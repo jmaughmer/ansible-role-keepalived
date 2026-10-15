@@ -1,0 +1,27 @@
+---
+- name: Service | Enable and start keepalived
+  ansible.builtin.systemd_service:
+    name: keepalived
+    enabled: true
+    state: started
+  register: _ka_service_started
+
+# Started just now: it already runs the new configuration.
+- name: Service | Restart keepalived for new daemon options
+  ansible.builtin.systemd_service:
+    name: keepalived
+    state: restarted
+  when:
+    - _ka_sysconfig | default({}) is changed
+    - _ka_service_started is not changed
+
+# A reload keeps the addresses where they are unless the new configuration
+# moves them, e.g. a changed priority with preempt.
+- name: Service | Reload keepalived for the new configuration
+  ansible.builtin.systemd_service:
+    name: keepalived
+    state: reloaded
+  when:
+    - _ka_config | default({}) is changed
+    - _ka_sysconfig | default({}) is not changed
+    - _ka_service_started is not changed

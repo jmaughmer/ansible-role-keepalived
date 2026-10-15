@@ -1,0 +1,12 @@
+---
+# Installs this role and its collections for the example playbook:
+#   ansible-galaxy install -r requirements.yml
+roles:
+  - name: keepalived
+    src: https://github.com/jmaughmer/ansible-role-keepalived.git
+    scm: git
+    version: main
+
+collections:
+  - name: ansible.posix
+    version: ">=1.5.2"

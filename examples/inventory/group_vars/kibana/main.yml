@@ -1,0 +1,14 @@
+---
+# kibana.example.com resolves to 192.0.2.10, and is in the Kibana certificates
+# and kibana_server_public_base_url. The instance is named like the group, so
+# the group's hosts share it, in inventory order of preference.
+keepalived_instances:
+  - name: kibana
+    address: 192.0.2.10/24
+    virtual_router_id: 51
+    # Kibana answers /api/status with 503 while it starts or migrates, so the
+    # address stays on an instance that can serve.
+    check:
+      type: https
+      port: 5601
+      path: /api/status

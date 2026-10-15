@@ -1,0 +1,33 @@
+#!/bin/bash
+# Health check that keepalived's vrrp_script runs, installed by Ansible
+# (ansible-role-keepalived). Exit 0 means the service answers.
+#
+#   ansible-keepalived-check tcp HOST PORT TIMEOUT
+#   ansible-keepalived-check http URL TIMEOUT [insecure | CA_FILE]
+#
+# keepalived runs it as its script_user, without a shell, so the arguments
+# never hold spaces or quotes.
+set -u
+
+case "${1:-}" in
+  tcp)
+    [ $# -eq 4 ] || exit 2
+    # Bash opens the connection itself; nothing else has to be installed.
+    exec /usr/bin/timeout "$4" /usr/bin/bash -c 'exec 3<>"/dev/tcp/$0/$1"' "$2" "$3"
+    ;;
+  http)
+    [ $# -eq 3 ] || [ $# -eq 4 ] || exit 2
+    tls=()
+    case "${4:-}" in
+      "") ;;
+      insecure) tls=(--insecure) ;;
+      *) tls=(--cacert "$4") ;;
+    esac
+    # --fail: a 4xx or 5xx answer (Kibana's 503 while starting) is unhealthy.
+    exec /usr/bin/curl --silent --fail --output /dev/null --max-time "$3" "${tls[@]}" "$2"
+    ;;
+  *)
+    echo "usage: $0 tcp HOST PORT TIMEOUT | http URL TIMEOUT [insecure|CA_FILE]" >&2
+    exit 2
+    ;;
+esac

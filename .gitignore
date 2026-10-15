@@ -1,0 +1,8 @@
+# Installed by ansible-galaxy when running the examples
+examples/roles/
+examples/collections/
+
+*.retry
+.ansible/
+.vault_pass*
+vault-password*

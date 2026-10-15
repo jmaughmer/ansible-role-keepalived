@@ -1,0 +1,170 @@
+---
+# =============================================================================
+# Platform
+# =============================================================================
+# Distributions accepted by preflight, as reported by ansible_facts['distribution'].
+# Major versions 9 and 10 are supported. Other Enterprise Linux rebuilds, such as
+# CentOS (Stream) or OracleLinux, can be added here but are not tested.
+keepalived_supported_distributions:
+  - RedHat
+  - AlmaLinux
+  - Rocky
+
+# =============================================================================
+# Virtual addresses
+# =============================================================================
+# One entry per virtual address this host can carry. Every host that shares an
+# address lists the same entry (same name, address and virtual_router_id), so
+# the usual place for it is the group_vars of the group that serves it:
+#
+#   keepalived_instances:
+#     - name: kibana                 # letters, digits, _ . - ; unique on the host
+#       address: 192.0.2.10/24       # IPv4 or IPv6, with an optional prefix length
+#       virtual_router_id: 51        # 1-255, unique among the addresses on the network
+#       # Optional:
+#       interface: eth0              # default: keepalived_interface
+#       group: kibana                # inventory group of the hosts that share the
+#                                    # address; default: the group named like the
+#                                    # instance if there is one, else the hosts in
+#                                    # the play that list it
+#       priority: 150                # default: computed from the host's place in the group
+#       preempt: false               # default: keepalived_preempt
+#       advert_int: 1                # default: keepalived_advert_int
+#       check:                       # the address only stays on a host whose check passes
+#         type: tcp                  # tcp, http, https, script or none
+#         port: 5601                 # tcp, http, https
+#         host: 127.0.0.1            # default: the host's own address on the interface
+#         path: /api/status          # http, https; default /
+#         validate_certs: false      # https; true verifies against ca_path or the system CAs
+#         ca_path: ""                # https
+#         command: /usr/local/bin/x  # script: run as keepalived_script_user, exit 0 = healthy
+#         interval: 2                # the rest default to keepalived_check_defaults
+#         timeout: 3
+#         fall: 2
+#         rise: 2
+#
+# The entries hold no secrets.
+keepalived_instances: []
+
+# Interface the addresses are added to when an instance does not name one.
+keepalived_interface: "{{ (ansible_facts['default_ipv4'] | default({})).interface | default('') }}"
+
+# Defaults for every instance's `check`. A check that fails `fall` times in a row
+# takes the host out of the election (FAULT) until it passes `rise` times.
+keepalived_check_defaults:
+  type: tcp
+  interval: 2
+  timeout: 3
+  fall: 2
+  rise: 2
+  path: /
+  validate_certs: false
+  ca_path: ""
+
+# =============================================================================
+# VRRP
+# =============================================================================
+# Every instance starts as BACKUP and the highest priority wins the first
+# election. Without an explicit priority, a host's priority is
+#   keepalived_priority_base - keepalived_priority_step * (its index in the group)
+# so the first host in the group is preferred. Set keepalived_priority on a host
+# to give it the same priority for every instance, or `priority` on an instance.
+keepalived_priority: ""
+keepalived_priority_base: 150
+keepalived_priority_step: 10
+
+# false: nopreempt. A recovered host with a higher priority does not take the
+# address back, so it moves only when the host holding it fails. true: it moves
+# back to the preferred host once that host is healthy again.
+keepalived_preempt: false
+
+# Seconds between VRRP advertisements. A backup takes over about 3 advertisements
+# after the master stops sending them.
+keepalived_advert_int: 1
+
+# VRRP protocol version: 3 (RFC 5798, IPv4 and IPv6) or 2. Every host sharing an
+# address must use the same version.
+keepalived_vrrp_version: 3
+
+# false: advertisements go to the VRRP multicast group (224.0.0.18 / ff02::12).
+# true: they go to the other hosts directly, for networks that drop multicast,
+# such as most clouds. Each peer's address comes from keepalived_unicast_src_ip
+# on that host, or its own address on the interface (from its facts).
+keepalived_unicast: false
+# Address this host sends from and is reached at. Empty uses its address on the
+# instance's interface, of the same family as the virtual address.
+keepalived_unicast_src_ip: ""
+
+# router_id in global_defs, used in logs and notifications
+keepalived_router_id: "{{ inventory_hostname_short }}"
+
+# Allow services to bind the virtual addresses while this host does not hold
+# them (net.ipv4.ip_nonlocal_bind and net.ipv6.ip_nonlocal_bind). Only needed
+# for services that listen on the virtual address itself instead of 0.0.0.0.
+keepalived_nonlocal_bind: false
+
+# Extra lines added to global_defs, e.g. ["vrrp_garp_master_refresh 60"]
+keepalived_global_defs_extra: []
+
+# =============================================================================
+# Package and service
+# =============================================================================
+# keepalived comes from the host's enabled repositories (AppStream on EL 9/10).
+keepalived_packages:
+  - keepalived
+
+# Options for the keepalived daemon (/etc/sysconfig/keepalived). --vrrp runs
+# only the VRRP subsystem; the role does not use IPVS.
+keepalived_options: "-D --vrrp"
+
+keepalived_conf_dir: /etc/keepalived
+# Health check helper; /usr/libexec/keepalived is labelled for scripts that
+# keepalived runs unconfined by SELinux.
+keepalived_scripts_dir: /usr/libexec/keepalived
+
+# Unprivileged user the health checks run as (keepalived's script_user)
+keepalived_script_user: keepalived_script
+
+# After a change, wait until each address with a tcp, http or https check
+# answers on the check's port, from a host that shares it. Fails the run when no
+# host takes the address within keepalived_wait_timeout seconds.
+keepalived_wait_for_address: true
+keepalived_wait_timeout: 60
+
+# Run against part of the hosts (--limit) only when every instance names its
+# group, so priorities and unicast peers come from the inventory rather than
+# from the hosts in the play. Set true to allow it anyway.
+keepalived_allow_limit: false
+
+# =============================================================================
+# Firewall
+# =============================================================================
+# Accept VRRP (IP protocol 112) in firewalld, permanently and immediately.
+keepalived_manage_firewall: true
+keepalived_firewall_zone: public
+# Service ports reached through the virtual addresses, e.g. ["5601/tcp"]. The
+# service roles open them already; list them here too when this role may run
+# on its own.
+keepalived_firewall_ports: []
+
+# =============================================================================
+# Hardened hosts (fapolicyd)
+# =============================================================================
+# Trust the health check helper this role installs, which rpm did not.
+#   auto  - when fapolicyd is running
+#   true / false
+keepalived_fapolicyd_trust: auto
+# File under /etc/fapolicyd/trust.d/ the entry is written to
+keepalived_fapolicyd_trust_file: ansible-keepalived
+
+# =============================================================================
+# Network resilience (high-latency / low-bandwidth links)
+# =============================================================================
+# Retries for the package download
+keepalived_task_retries: 3
+keepalived_task_delay: 15
+# Package downloads run as async jobs so they keep running on the host if the
+# SSH session drops: maximum run time and poll interval (seconds).
+keepalived_download_async_timeout: 3600
+keepalived_download_async_poll: 15
+keepalived_dnf_lock_timeout: 300

@@ -1,0 +1,26 @@
+---
+# Two addresses in front of the same web server:
+#   web      named like the group, so its members, and their priorities, come
+#            from the inventory group; an http check
+#   web_tcp  no group of that name, so its members are the hosts in the play
+#            that list it; a tcp check, and a short advertisement interval
+keepalived_instances:
+  - name: web
+    address: "{{ test_vip_web }}/{{ test_prefix }}"
+    virtual_router_id: 61
+    check:
+      type: http
+      port: "{{ test_web_port }}"
+      path: /index.html
+  - name: web_tcp
+    address: "{{ test_vip_tcp }}/{{ test_prefix }}"
+    virtual_router_id: 62
+    check:
+      type: tcp
+      port: "{{ test_web_port }}"
+      interval: 1
+      fall: 2
+      rise: 2
+
+# Not running in containers: keep the run short when something is wrong.
+keepalived_wait_timeout: 60

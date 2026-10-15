@@ -1,0 +1,18 @@
+---
+# The virtual addresses are taken from the first web host's network, so facts
+# are gathered from every host first. The role is applied to both web hosts in
+# one play, as in examples/playbook.yml, and included by the repository's path,
+# which works whatever the roles path is.
+- name: Gather facts from every host
+  hosts: all
+  gather_facts: true
+  tasks: []
+
+- name: Converge
+  hosts: web
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Apply the role
+      ansible.builtin.include_role:
+        name: "{{ test_role_dir }}"

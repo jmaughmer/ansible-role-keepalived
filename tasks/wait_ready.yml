@@ -1,0 +1,21 @@
+---
+# Runs once for the play. For every address with a tcp, http or https check,
+# waits until the check's port answers on the address, from a host that shares
+# it: some host has taken the address and its service is up.
+- name: Wait | Wait for each address to answer
+  ansible.builtin.wait_for:
+    host: "{{ item.vip }}"
+    port: "{{ item.check.port }}"
+    timeout: "{{ keepalived_wait_timeout }}"
+    msg: >-
+      Nothing answered on {{ item.vip }}:{{ item.check.port }} ({{ item.name }}) within
+      {{ keepalived_wait_timeout }} s. No host may have passed its check: see
+      `journalctl -u keepalived` on the hosts sharing it.
+  delegate_to: >-
+    {{ ansible_play_hosts | map('extract', hostvars) | selectattr('_ka_names', 'defined')
+       | selectattr('_ka_names', 'contains', item.name) | map(attribute='inventory_hostname') | first }}
+  loop: "{{ _ka_play_instances | selectattr('check.type', 'in', _ka_port_check_types) | list }}"
+  loop_control:
+    label: "{{ item.name }} {{ item.vip }}:{{ item.check.port }}"
+  run_once: true
+  when: not ansible_check_mode

@@ -1,0 +1,83 @@
+---
+- name: System | Create the health check user
+  ansible.builtin.user:
+    name: "{{ keepalived_script_user }}"
+    system: true
+    shell: /sbin/nologin
+    home: /
+    create_home: false
+    comment: keepalived health checks
+
+# /usr/libexec/keepalived is labelled keepalived_unconfined_script_exec_t, so
+# the checks can reach any port without changing SELinux booleans.
+- name: System | Create the scripts directory
+  ansible.builtin.file:
+    path: "{{ keepalived_scripts_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: System | Install the health check helper
+  ansible.builtin.copy:
+    src: ansible-keepalived-check
+    dest: "{{ _ka_check_helper }}"
+    owner: root
+    group: root
+    mode: "0755"
+  register: _ka_check_helper_file
+
+- name: System | Allow binding addresses this host does not hold
+  ansible.posix.sysctl:
+    name: "{{ item }}"
+    value: "{{ '1' if keepalived_nonlocal_bind | bool else '0' }}"
+    sysctl_file: /etc/sysctl.d/90-keepalived.conf
+    state: present
+    reload: true
+  loop:
+    - net.ipv4.ip_nonlocal_bind
+    - net.ipv6.ip_nonlocal_bind
+  when: keepalived_nonlocal_bind | bool
+
+- name: System | Check whether firewalld is running
+  ansible.builtin.command:  # noqa: command-instead-of-module - only reads the state, which must not fail when the unit is absent
+    cmd: systemctl is-active firewalld
+  register: _ka_firewalld_state
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: keepalived_manage_firewall | bool
+
+- name: System | Accept VRRP in firewalld
+  ansible.posix.firewalld:
+    protocol: vrrp
+    zone: "{{ keepalived_firewall_zone }}"
+    permanent: true
+    immediate: true
+    state: enabled
+  when:
+    - keepalived_manage_firewall | bool
+    - (_ka_firewalld_state.stdout | default('') | trim) == 'active'
+
+- name: System | Open service ports in firewalld
+  ansible.posix.firewalld:
+    port: "{{ item }}"
+    zone: "{{ keepalived_firewall_zone }}"
+    permanent: true
+    immediate: true
+    state: enabled
+  loop: "{{ keepalived_firewall_ports }}"
+  when:
+    - keepalived_manage_firewall | bool
+    - (_ka_firewalld_state.stdout | default('') | trim) == 'active'
+
+- name: System | Report that firewalld is not running
+  ansible.builtin.debug:
+    msg: >-
+      keepalived_manage_firewall is on but firewalld is not running on {{ inventory_hostname }}, so no
+      rules were added. VRRP (IP protocol 112) has to reach the other hosts sharing an address{{
+      (', and ' ~ keepalived_firewall_ports | join(', ') ~ ' the clients') if keepalived_firewall_ports | length > 0 else '' }},
+      however this host filters traffic.
+  when:
+    - keepalived_manage_firewall | bool
+    - (_ka_firewalld_state.stdout | default('') | trim) != 'active'

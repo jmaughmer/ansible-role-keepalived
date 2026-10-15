@@ -1,0 +1,51 @@
+---
+# Preflight only: each case in converge.yml runs the role's facts and
+# preflight tasks with settings that must be refused, and checks the run fails
+# in the right check and with the right message. Nothing is installed, so
+# there is no prepare, idempotence or verify step.
+#   molecule test -s preflight
+#
+# kap-1 is also in the group "other", so one case can leave kap-2 outside an
+# instance's group, and in "ghostly" with kap-ghost from inventory/hosts.yml, a
+# host that is never contacted and so has no address for unicast.
+role_name_check: 1
+
+dependency:
+  name: galaxy
+  options:
+    requirements-file: ${MOLECULE_SCENARIO_DIRECTORY}/../default/requirements.yml
+
+driver:
+  name: podman
+
+platforms:
+  - name: kap-1
+    image: "docker.io/geerlingguy/docker-${MOLECULE_DISTRO:-rockylinux9}-ansible:latest"
+    pre_build_image: true
+    override_command: false
+    systemd: always
+    network: keepalived_preflight
+    groups: [web, other, ghostly]
+
+  - name: kap-2
+    image: "docker.io/geerlingguy/docker-${MOLECULE_DISTRO:-rockylinux9}-ansible:latest"
+    pre_build_image: true
+    override_command: false
+    systemd: always
+    network: keepalived_preflight
+    groups: [web]
+
+provisioner:
+  name: ansible
+  inventory:
+    links:
+      hosts: inventory/hosts.yml   # kap-ghost
+
+scenario:
+  test_sequence:
+    - dependency
+    - destroy
+    - syntax
+    - create
+    - converge
+    - destroy

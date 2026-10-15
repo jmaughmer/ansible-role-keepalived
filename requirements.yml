@@ -1,0 +1,6 @@
+---
+# Collections used by this role. Install with:
+#   ansible-galaxy collection install -r requirements.yml
+collections:
+  - name: ansible.posix
+    version: ">=1.5.2"   # firewalld protocol parameter

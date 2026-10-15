@@ -1,0 +1,16 @@
+---
+# Shared by every case in converge.yml
+test_role: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') }}"
+test_first: "{{ groups['web'][0] }}"
+
+# Valid settings; each case changes some of them (case.yml). "web" is also a
+# group, so both hosts share the address with priorities from the group.
+test_check: {type: tcp, port: 8080}
+test_instances:
+  - name: web
+    address: 192.0.2.10/24
+    virtual_router_id: 51
+    check: "{{ test_check }}"
+# Two addresses without a group of their name
+test_alpha: {name: alpha, address: 192.0.2.11/24, virtual_router_id: 52, check: "{{ test_check }}"}
+test_beta: {name: beta, address: 192.0.2.12/24, virtual_router_id: 52, check: "{{ test_check }}"}

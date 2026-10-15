@@ -1,0 +1,33 @@
+---
+- name: Gather keepalived facts
+  ansible.builtin.import_tasks: facts.yml
+  tags: [keepalived, always]
+
+- name: Preflight checks
+  ansible.builtin.import_tasks: preflight.yml
+  tags: [keepalived, always]
+
+- name: Install keepalived
+  ansible.builtin.import_tasks: install.yml
+  tags: [keepalived, keepalived_install]
+
+- name: Configure operating system
+  ansible.builtin.import_tasks: system.yml
+  tags: [keepalived, keepalived_system]
+
+- name: Manage fapolicyd trust
+  ansible.builtin.import_tasks: fapolicyd.yml
+  tags: [keepalived, keepalived_system]
+
+- name: Render configuration
+  ansible.builtin.import_tasks: configure.yml
+  tags: [keepalived, keepalived_config]
+
+- name: Start or reload service
+  ansible.builtin.import_tasks: service.yml
+  tags: [keepalived, keepalived_service]
+
+- name: Wait for the addresses
+  ansible.builtin.import_tasks: wait_ready.yml
+  when: keepalived_wait_for_address | bool
+  tags: [keepalived, keepalived_service]

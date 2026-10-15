@@ -1,0 +1,63 @@
+---
+# fapolicyd only lets bash read scripts it trusts, and its trust comes from the
+# rpm database, which does not know the health check helper.
+- name: fapolicyd | Check whether fapolicyd is running
+  ansible.builtin.command:  # noqa: command-instead-of-module - only reads the state, which must not fail when the unit is absent
+    cmd: systemctl is-active fapolicyd
+  register: _ka_fapolicyd_state
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: (keepalived_fapolicyd_trust | string | lower) == 'auto'
+
+- name: fapolicyd | Manage the trust entry
+  when: _ka_fapolicyd_manage | bool
+  block:
+    - name: fapolicyd | Verify fapolicyd-cli is available
+      ansible.builtin.stat:
+        path: /usr/sbin/fapolicyd-cli
+      register: _ka_fapolicyd_cli
+
+    - name: fapolicyd | Report a missing fapolicyd-cli
+      ansible.builtin.assert:
+        that:
+          - _ka_fapolicyd_cli.stat.exists
+        fail_msg: >-
+          keepalived_fapolicyd_trust asks for a trust entry, but /usr/sbin/fapolicyd-cli is not
+          installed on {{ inventory_hostname }}. Install the fapolicyd package, or set
+          keepalived_fapolicyd_trust: false and trust {{ _ka_check_helper }} another way.
+        quiet: true
+
+    - name: fapolicyd | Check the trust file
+      ansible.builtin.stat:
+        path: "{{ _ka_fapolicyd_trust_path }}"
+      register: _ka_fapolicyd_file
+
+    # The entry holds the helper's size and checksum, so it is rewritten
+    # whenever the helper changes.
+    - name: fapolicyd | Remove the previous trust entry
+      ansible.builtin.file:
+        path: "{{ _ka_fapolicyd_trust_path }}"
+        state: absent
+      when:
+        - _ka_fapolicyd_file.stat.exists
+        - _ka_check_helper_file is changed
+
+    - name: fapolicyd | Trust the health check helper
+      ansible.builtin.command:
+        argv:
+          - /usr/sbin/fapolicyd-cli
+          - --file
+          - add
+          - "{{ _ka_check_helper }}"
+          - --trust-file
+          - "{{ keepalived_fapolicyd_trust_file }}"
+      changed_when: true
+      register: _ka_fapolicyd_added
+      when: (not _ka_fapolicyd_file.stat.exists) or (_ka_check_helper_file is changed)
+
+    - name: fapolicyd | Load the trust database
+      ansible.builtin.command:
+        cmd: /usr/sbin/fapolicyd-cli --update
+      changed_when: true
+      when: _ka_fapolicyd_added is not skipped
