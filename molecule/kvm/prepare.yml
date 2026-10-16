@@ -1,0 +1,15 @@
+---
+# vm.max_map_count is the container host's in the default scenario; on a VM
+# it is the VM's own (65530 on a fresh AlmaLinux), too low for Elasticsearch.
+# Raise it for this boot only, as on the container host.
+- name: Raise vm.max_map_count for this boot
+  hosts: all
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Set vm.max_map_count
+      ansible.builtin.command: sysctl -w vm.max_map_count=262144
+      changed_when: true
+
+- name: Prepare as in the default scenario
+  ansible.builtin.import_playbook: ../default/prepare.yml

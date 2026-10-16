@@ -1,0 +1,159 @@
+---
+# Creates one libvirt VM per platform from a cached cloud image:
+# base qcow2 (downloaded once) -> per-instance overlay + cloud-init seed ISO.
+- name: Create
+  hosts: localhost
+  connection: local
+  become: false   # runs as you on this machine; only the VMs escalate
+  gather_facts: false
+  vars:
+    # Per repo, so scenarios of different roles can run side by side
+    vm_prefix: "molecule-{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') | basename | regex_replace('^ansible-role-', '') }}-"
+    libvirt_uri: qemu:///system
+    image_dir: /var/lib/libvirt/images/molecule
+    ssh_key: "{{ molecule_ephemeral_directory }}/id_ed25519"
+    vm_user: molecule
+  tasks:
+    - name: Create SSH key for the instances
+      ansible.builtin.command:
+        cmd: ssh-keygen -q -t ed25519 -N "" -C molecule -f {{ ssh_key }}
+        creates: "{{ ssh_key }}"
+
+    - name: Download base images (cached across runs)
+      ansible.builtin.get_url:
+        url: "{{ item.image_url }}"
+        checksum: "{{ item.image_checksum | default(omit) }}"
+        dest: "{{ image_dir }}/base/{{ item.image_url | basename }}"
+        mode: "0644"
+      loop: "{{ molecule_yml.platforms }}"
+      loop_control:
+        label: "{{ item.image_url | basename }}"
+
+    - name: Create per-instance work directories
+      ansible.builtin.file:
+        path: "{{ image_dir }}/{{ vm_prefix }}{{ item.name }}"
+        state: directory
+        mode: "2775"
+      loop: "{{ molecule_yml.platforms }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Create overlay disks
+      ansible.builtin.command:
+        cmd: >-
+          qemu-img create -q -f qcow2 -F qcow2
+          -b {{ image_dir }}/base/{{ item.image_url | basename }}
+          {{ image_dir }}/{{ vm_prefix }}{{ item.name }}/disk.qcow2 {{ item.disk_gb | default(20) }}G
+        creates: "{{ image_dir }}/{{ vm_prefix }}{{ item.name }}/disk.qcow2"
+      loop: "{{ molecule_yml.platforms }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Write cloud-init user-data
+      ansible.builtin.copy:
+        dest: "{{ image_dir }}/{{ vm_prefix }}{{ item.name }}/user-data"
+        mode: "0644"
+        content: |
+          #cloud-config
+          users:
+            - name: {{ vm_user }}
+              sudo: "ALL=(ALL) NOPASSWD:ALL"
+              shell: /bin/bash
+              ssh_authorized_keys:
+                - {{ lookup('ansible.builtin.file', ssh_key + '.pub') }}
+      loop: "{{ molecule_yml.platforms }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Write cloud-init meta-data
+      ansible.builtin.copy:
+        dest: "{{ image_dir }}/{{ vm_prefix }}{{ item.name }}/meta-data"
+        mode: "0644"
+        content: |
+          instance-id: {{ item.name }}
+          local-hostname: {{ item.name }}
+      loop: "{{ molecule_yml.platforms }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Build cloud-init seed ISOs
+      ansible.builtin.command:
+        cmd: >-
+          xorriso -as mkisofs -quiet -o seed.iso -V cidata -J -r user-data meta-data
+        chdir: "{{ image_dir }}/{{ vm_prefix }}{{ item.name }}"
+        creates: "{{ image_dir }}/{{ vm_prefix }}{{ item.name }}/seed.iso"
+      loop: "{{ molecule_yml.platforms }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: List existing VMs
+      ansible.builtin.command: virsh -c {{ libvirt_uri }} list --all --name
+      register: existing_vms
+      changed_when: false
+
+    - name: Start VMs
+      ansible.builtin.command:
+        cmd: >-
+          virt-install --connect {{ libvirt_uri }}
+          --name {{ vm_prefix }}{{ item.name }}
+          --memory {{ item.memory_mb | default(2048) }}
+          --vcpus {{ item.vcpus | default(2) }}
+          --cpu host-passthrough
+          --osinfo {{ item.osinfo | default('linux2024') }}
+          --import
+          --disk path={{ image_dir }}/{{ vm_prefix }}{{ item.name }}/disk.qcow2,bus=virtio
+          --disk path={{ image_dir }}/{{ vm_prefix }}{{ item.name }}/seed.iso,device=cdrom
+          --network network=default,model=virtio
+          --graphics none --noautoconsole
+      loop: "{{ molecule_yml.platforms }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: (vm_prefix + item.name) not in existing_vms.stdout_lines
+      changed_when: true   # only runs for VMs that do not exist yet
+
+    - name: Wait for DHCP addresses
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail;
+          virsh -c {{ libvirt_uri }} domifaddr {{ vm_prefix }}{{ item.name }} --source lease
+          | awk '/ipv4/ {split($4, a, "/"); print a[1]; exit}'
+      register: vm_addrs
+      until: vm_addrs.stdout | length > 0
+      retries: 60
+      delay: 3
+      changed_when: false
+      loop: "{{ molecule_yml.platforms }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Wait for SSH
+      ansible.builtin.wait_for:
+        host: "{{ item.stdout }}"
+        port: 22
+        search_regex: OpenSSH
+        timeout: 300
+      loop: "{{ vm_addrs.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Build instance config
+      ansible.builtin.set_fact:
+        instance_conf: >-
+          {{ instance_conf | default([]) + [{
+               'instance': item.item.name,
+               'address': item.stdout,
+               'user': vm_user,
+               'port': 22,
+               'identity_file': ssh_key}] }}
+      loop: "{{ vm_addrs.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Dump instance config
+      ansible.builtin.copy:
+        content: |
+          # Molecule managed
+
+          {{ instance_conf | to_json | from_json | to_yaml }}
+        dest: "{{ molecule_instance_config }}"
+        mode: "0600"

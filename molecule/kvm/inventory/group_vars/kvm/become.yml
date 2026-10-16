@@ -1,0 +1,4 @@
+---
+# The default scenario's playbooks connect as root to containers; the VMs'
+# user is create.yml's, with passwordless sudo.
+ansible_become: true

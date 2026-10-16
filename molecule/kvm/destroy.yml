@@ -1,0 +1,46 @@
+---
+- name: Destroy
+  hosts: localhost
+  connection: local
+  become: false   # runs as you on this machine; only the VMs escalate
+  gather_facts: false
+  vars:
+    # Per repo, so scenarios of different roles can run side by side
+    vm_prefix: "molecule-{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') | basename | regex_replace('^ansible-role-', '') }}-"
+    libvirt_uri: qemu:///system
+    image_dir: /var/lib/libvirt/images/molecule
+  tasks:
+    - name: Stop VMs
+      ansible.builtin.command: virsh -c {{ libvirt_uri }} destroy {{ vm_prefix }}{{ item.name }}
+      register: vm_stop
+      changed_when: vm_stop.rc == 0
+      failed_when: false
+      loop: "{{ molecule_yml.platforms }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Undefine VMs
+      ansible.builtin.command: virsh -c {{ libvirt_uri }} undefine {{ vm_prefix }}{{ item.name }}
+      register: vm_undef
+      changed_when: vm_undef.rc == 0
+      failed_when: false
+      loop: "{{ molecule_yml.platforms }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Remove per-instance disks (base images stay cached)
+      ansible.builtin.file:
+        path: "{{ image_dir }}/{{ vm_prefix }}{{ item.name }}"
+        state: absent
+      loop: "{{ molecule_yml.platforms }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Dump empty instance config
+      ansible.builtin.copy:
+        content: |
+          # Molecule managed
+
+          []
+        dest: "{{ molecule_instance_config }}"
+        mode: "0600"

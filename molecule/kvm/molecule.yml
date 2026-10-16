@@ -1,0 +1,87 @@
+---
+# The default scenario on real AlmaLinux 10 VMs (local KVM/libvirt,
+# qemu:///system) instead of containers: same hosts, groups, playbooks and
+# inventory. Overrides for what a VM can do that a container cannot go in
+# inventory/group_vars/<group>/kvm.yml.
+#   molecule test -s kvm
+#
+# create.yml boots one VM per platform from a cached cloud image, with a user
+# with passwordless sudo; group_vars/kvm/become.yml escalates on the VMs. The machine
+# running Molecule needs libvirt, virt-install, qemu-img and xorriso, and its
+# user must be able to manage qemu:///system.
+role_name_check: 1
+
+dependency:
+  name: galaxy
+
+driver:
+  name: default
+  options:
+    managed: true
+
+platforms:
+  - name: ka-1
+    image_url: https://repo.almalinux.org/almalinux/10/cloud/x86_64/images/AlmaLinux-10-GenericCloud-latest.x86_64.qcow2
+    image_checksum: sha256:https://repo.almalinux.org/almalinux/10/cloud/x86_64/images/CHECKSUM
+    osinfo: almalinux10
+    memory_mb: 2048
+    vcpus: 2
+    disk_gb: 20
+    groups:
+      - web
+      - kvm
+  - name: ka-2
+    image_url: https://repo.almalinux.org/almalinux/10/cloud/x86_64/images/AlmaLinux-10-GenericCloud-latest.x86_64.qcow2
+    image_checksum: sha256:https://repo.almalinux.org/almalinux/10/cloud/x86_64/images/CHECKSUM
+    osinfo: almalinux10
+    memory_mb: 2048
+    vcpus: 2
+    disk_gb: 20
+    groups:
+      - web
+      - kvm
+  - name: ka-client
+    image_url: https://repo.almalinux.org/almalinux/10/cloud/x86_64/images/AlmaLinux-10-GenericCloud-latest.x86_64.qcow2
+    image_checksum: sha256:https://repo.almalinux.org/almalinux/10/cloud/x86_64/images/CHECKSUM
+    osinfo: almalinux10
+    memory_mb: 2048
+    vcpus: 2
+    disk_gb: 20
+    groups:
+      - client
+      - kvm
+
+provisioner:
+  name: ansible
+  config_options:
+    defaults:
+      host_key_checking: false
+    ssh_connection:
+      pipelining: true
+  playbooks:
+    create: create.yml
+    destroy: destroy.yml
+    prepare: prepare.yml
+    converge: ../default/converge.yml
+    side_effect: ../default/side_effect.yml
+    verify: ../default/verify.yml
+  inventory:
+    links:
+      group_vars: inventory/group_vars/
+
+verifier:
+  name: ansible
+
+scenario:
+  test_sequence:
+    - dependency
+    - destroy
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - check
+    - side_effect
+    - verify
+    - destroy
