@@ -1,4 +1,16 @@
 ---
+# Cloud images finish first-boot setup in the background (on Ubuntu that
+# includes apt runs that hold the package lock), so wait for it.
+- name: Wait for cloud-init
+  hosts: all
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Wait for cloud-init to finish
+      ansible.builtin.command: cloud-init status --wait
+      changed_when: false
+      failed_when: false
+
 # vm.max_map_count is the container host's in the default scenario; on a VM
 # it is the VM's own (65530 on a fresh AlmaLinux), too low for Elasticsearch.
 # Raise it for this boot only, as on the container host.

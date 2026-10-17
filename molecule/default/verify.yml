@@ -59,6 +59,20 @@
           - test_helper.stat.pw_name == 'root'
           - test_helper.stat.mode == '0755'
 
+    - name: Read the ufw rules
+      ansible.builtin.command:
+        cmd: ufw show added
+      register: test_ufw
+      changed_when: false
+      when: ansible_facts['os_family'] == 'Debian'
+
+    - name: Check VRRP and the web port are allowed in ufw
+      ansible.builtin.assert:
+        that:
+          - test_ufw.stdout is search('vrrp')
+          - test_ufw.stdout is search(test_web_port ~ '/tcp')
+      when: ansible_facts['os_family'] == 'Debian'
+
     - name: Run the checks as the script user
       ansible.builtin.command:
         argv: [runuser, -u, keepalived_script, --, /usr/libexec/keepalived/ansible-keepalived-check, tcp, 127.0.0.1, "{{ test_web_port }}", "3"]

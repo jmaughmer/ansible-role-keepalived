@@ -41,3 +41,29 @@
       ansible.builtin.wait_for:
         port: "{{ test_web_port }}"
         timeout: 30
+
+# On Ubuntu the web hosts run ufw, which denies incoming connections by
+# default (SSH stays open for Ansible), so VRRP between them and the web port
+# from the client only get through when the role opens them.
+- name: Start ufw on the Ubuntu web hosts
+  hosts: web
+  gather_facts: true
+  tasks:
+    - name: Install ufw
+      ansible.builtin.apt:
+        name: ufw
+        state: present
+        update_cache: true
+      when: ansible_facts['os_family'] == 'Debian'
+
+    - name: Allow SSH through ufw
+      community.general.ufw:
+        rule: allow
+        port: "22"
+        proto: tcp
+      when: ansible_facts['os_family'] == 'Debian'
+
+    - name: Enable ufw
+      community.general.ufw:
+        state: enabled
+      when: ansible_facts['os_family'] == 'Debian'

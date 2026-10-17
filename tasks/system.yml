@@ -71,13 +71,47 @@
     - keepalived_manage_firewall | bool
     - (_ka_firewalld_state.stdout | default('') | trim) == 'active'
 
-- name: System | Report that firewalld is not running
+# Ubuntu's firewall. Rules are only added while ufw is active, as with firewalld.
+- name: System | Check whether ufw is active
+  ansible.builtin.command:
+    cmd: ufw status
+  register: _ka_ufw_state
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when:
+    - keepalived_manage_firewall | bool
+    - (_ka_firewalld_state.stdout | default('') | trim) != 'active'
+
+# VRRP is its own IP protocol, sent to 224.0.0.18 or, with unicast, to the peers.
+- name: System | Accept VRRP in ufw
+  community.general.ufw:
+    rule: allow
+    proto: vrrp
+    comment: keepalived
+  when:
+    - keepalived_manage_firewall | bool
+    - _ka_ufw_active | bool
+
+- name: System | Open service ports in ufw
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.split('/') | first | replace('-', ':') }}"
+    proto: "{{ item.split('/') | last }}"
+    comment: keepalived
+  loop: "{{ keepalived_firewall_ports }}"
+  when:
+    - keepalived_manage_firewall | bool
+    - _ka_ufw_active | bool
+
+- name: System | Report that no firewall is running
   ansible.builtin.debug:
     msg: >-
-      keepalived_manage_firewall is on but firewalld is not running on {{ inventory_hostname }}, so no
+      keepalived_manage_firewall is on but neither firewalld nor ufw is running on {{ inventory_hostname }}, so no
       rules were added. VRRP (IP protocol 112) has to reach the other hosts sharing an address{{
       (', and ' ~ keepalived_firewall_ports | join(', ') ~ ' the clients') if keepalived_firewall_ports | length > 0 else '' }},
       however this host filters traffic.
   when:
     - keepalived_manage_firewall | bool
     - (_ka_firewalld_state.stdout | default('') | trim) != 'active'
+    - not (_ka_ufw_active | bool)
