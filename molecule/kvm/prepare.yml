@@ -11,6 +11,23 @@
       changed_when: false
       failed_when: false
 
+# The roles and tests reach the other hosts by inventory name. Ubuntu's
+# systemd-resolved does not send single-label names to libvirt's DNS, so give
+# every VM the others' addresses directly.
+- name: Make the VMs resolve each other by name
+  hosts: all
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Add every VM to /etc/hosts
+      ansible.builtin.blockinfile:
+        path: /etc/hosts
+        marker: "# {mark} molecule hosts"
+        block: |
+          {% for host in groups['all'] %}
+          {{ hostvars[host].ansible_host }} {{ host }}
+          {% endfor %}
+
 # vm.max_map_count is the container host's in the default scenario; on a VM
 # it is the VM's own (65530 on a fresh AlmaLinux), too low for Elasticsearch.
 # Raise it for this boot only, as on the container host.
