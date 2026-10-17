@@ -1,0 +1,80 @@
+---
+# The kvm scenario on Ubuntu 26.04 VMs: same hosts, groups, playbooks, inventory and
+# kvm overrides, from Ubuntu 26.04's cloud image. See ../kvm/molecule.yml.
+#   molecule test -s kvm-ubuntu2604
+role_name_check: 1
+
+dependency:
+  name: galaxy
+
+driver:
+  name: default
+  options:
+    managed: true
+
+platforms:
+  - name: ka-1
+    image_url: https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64.img
+    image_checksum: sha256:https://cloud-images.ubuntu.com/resolute/current/SHA256SUMS
+    osinfo: linux2024  # osinfo-db has no ubuntu26.04 entry yet
+    memory_mb: 2048
+    vcpus: 2
+    disk_gb: 20
+    groups:
+      - web
+      - kvm
+  - name: ka-2
+    image_url: https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64.img
+    image_checksum: sha256:https://cloud-images.ubuntu.com/resolute/current/SHA256SUMS
+    osinfo: linux2024  # osinfo-db has no ubuntu26.04 entry yet
+    memory_mb: 2048
+    vcpus: 2
+    disk_gb: 20
+    groups:
+      - web
+      - kvm
+  - name: ka-client
+    image_url: https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64.img
+    image_checksum: sha256:https://cloud-images.ubuntu.com/resolute/current/SHA256SUMS
+    osinfo: linux2024  # osinfo-db has no ubuntu26.04 entry yet
+    memory_mb: 2048
+    vcpus: 2
+    disk_gb: 20
+    groups:
+      - client
+      - kvm
+
+provisioner:
+  name: ansible
+  config_options:
+    defaults:
+      host_key_checking: false
+    ssh_connection:
+      pipelining: true
+  playbooks:
+    create: ../kvm/create.yml
+    destroy: ../kvm/destroy.yml
+    prepare: ../kvm/prepare.yml
+    converge: ../default/converge.yml
+    side_effect: ../default/side_effect.yml
+    verify: ../default/verify.yml
+  inventory:
+    links:
+      group_vars: ../kvm/inventory/group_vars/
+
+verifier:
+  name: ansible
+
+scenario:
+  test_sequence:
+    - dependency
+    - destroy
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - check
+    - side_effect
+    - verify
+    - destroy

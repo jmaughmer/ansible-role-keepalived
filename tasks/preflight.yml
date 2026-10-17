@@ -4,13 +4,15 @@
     that:
       - keepalived_supported_distributions is sequence
       - keepalived_supported_distributions is not string
-      - ansible_facts['os_family'] == 'RedHat'
       - ansible_facts['distribution'] in keepalived_supported_distributions
-      - ansible_facts['distribution_major_version'] in ['9', '10']
+      - >-
+        (ansible_facts['os_family'] == 'RedHat' and ansible_facts['distribution_major_version'] in ['9', '10'])
+        or (ansible_facts['distribution'] == 'Ubuntu' and ansible_facts['distribution_version'] in ['24.04', '26.04'])
     fail_msg: >-
       Unsupported platform {{ ansible_facts['distribution'] }}
-      {{ ansible_facts['distribution_version'] }}. Supported: major version 9 or 10 of
-      {{ keepalived_supported_distributions | join(', ') }} (keepalived_supported_distributions).
+      {{ ansible_facts['distribution_version'] }}. Supported: Enterprise Linux 9 or 10 and Ubuntu
+      24.04 or 26.04, from {{ keepalived_supported_distributions | join(', ') }}
+      (keepalived_supported_distributions).
     quiet: true
 
 - name: Preflight | Verify keepalived_instances is a list of addresses

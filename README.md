@@ -1,6 +1,6 @@
 # ansible-role-keepalived
 
-An Ansible role that gives a group of hosts a shared virtual IP address with keepalived (VRRP), on RHEL, AlmaLinux and Rocky Linux 9 and 10. It is built to sit in front of Kibana, Logstash and Fleet Server, so users, senders and agents reach one name whichever instance is serving.
+An Ansible role that gives a group of hosts a shared virtual IP address with keepalived (VRRP), on RHEL, AlmaLinux and Rocky Linux 9 and 10, and on Ubuntu 24.04 and 26.04. It is built to sit in front of Kibana, Logstash and Fleet Server, so users, senders and agents reach one name whichever instance is serving.
 
 What it does:
 
@@ -12,28 +12,31 @@ What it does:
 - Checks the settings on every host, and compares them across hosts, before changing anything: clashing router ids, hosts that disagree on an address, equal priorities, missing interfaces.
 - Tests the configuration with `keepalived --config-test` before it replaces the running one, and reloads rather than restarts.
 - After a change, waits until each address answers on its service port.
-- Accepts VRRP in firewalld, and trusts its health check helper in fapolicyd.
+- Accepts VRRP in firewalld (or ufw on Ubuntu), and trusts its health check helper in fapolicyd.
 
 ## Requirements
 
-- **Control node:** ansible-core 2.15 or later, plus the `ansible.posix` collection (1.5.2 or later):
+- **Control node:** ansible-core 2.15 or later, plus the `ansible.posix` (1.5.2 or later) and `community.general` (10.3.0 or later, for ufw's `vrrp` protocol) collections:
 
   ```bash
   ansible-galaxy collection install -r requirements.yml
   ```
 
-- **Target hosts:** RHEL, AlmaLinux or Rocky Linux 9 or 10 (see [Supported platforms](#supported-platforms)). keepalived comes from AppStream, so the hosts need that repository or a mirror of it. On STIG-hardened hosts see [Hardened hosts](#hardened-hosts-fips-selinux-fapolicyd).
+- **Target hosts:** RHEL, AlmaLinux or Rocky Linux 9 or 10, or Ubuntu 24.04 or 26.04 (see [Supported platforms](#supported-platforms)). keepalived comes from AppStream on Enterprise Linux and from Ubuntu's main archive, so the hosts need that repository or a mirror of it. On STIG-hardened hosts see [Hardened hosts](#hardened-hosts-fips-selinux-fapolicyd).
 - **One layer 2 network** per address: the hosts sharing it must be on the same subnet, and the address must be free in it. Clouds that filter addresses a NIC does not own usually need their own mechanism instead of VRRP.
 
 ## Supported platforms
 
-| Distribution | `ansible_facts['distribution']` | Major versions |
+| Distribution | `ansible_facts['distribution']` | Versions |
 |---|---|---|
 | Red Hat Enterprise Linux | `RedHat` | 9, 10 |
 | AlmaLinux | `AlmaLinux` | 9, 10 |
 | Rocky Linux | `Rocky` | 9, 10 |
+| Ubuntu | `Ubuntu` | 24.04, 26.04 |
 
-Preflight stops the run on any other distribution or major version. To try another Enterprise Linux 9 or 10 rebuild, add its distribution fact to `keepalived_supported_distributions`. Those aren't tested.
+On Ubuntu the package comes through apt, the daemon options go in `/etc/default/keepalived` (`DAEMON_ARGS`) instead of `/etc/sysconfig/keepalived` (`KEEPALIVED_OPTIONS`), and the firewall is ufw. SELinux and fapolicyd are normally absent there, so their settings do nothing.
+
+Preflight stops the run on any other distribution or version. To try another Enterprise Linux 9 or 10 rebuild, add its distribution fact to `keepalived_supported_distributions`. Those aren't tested.
 
 ## Installation
 
@@ -49,6 +52,8 @@ roles:
 collections:
   - name: ansible.posix
     version: ">=1.5.2"
+  - name: community.general
+    version: ">=10.3.0"
 ```
 
 ```bash
@@ -62,7 +67,7 @@ ansible-galaxy install -r requirements.yml
 ```
 examples/
 ├── ansible.cfg                      # SSH settings for slow links, roles/collections paths
-├── requirements.yml                 # this role + ansible.posix
+├── requirements.yml                 # ansible.posix + community.general
 ├── playbook.yml
 └── inventory/
     ├── hosts.yml                    # kibana, logstash and fleet_server pairs
@@ -194,15 +199,15 @@ Run it after the services, so the addresses come up on hosts whose service alrea
 
 ## Firewall
 
-With `keepalived_manage_firewall` (on by default) the role accepts VRRP (IP protocol 112) in firewalld, permanently and immediately, in `keepalived_firewall_zone`:
+With `keepalived_manage_firewall` (on by default) the role accepts VRRP (IP protocol 112) in firewalld, permanently and immediately, in `keepalived_firewall_zone`. On Ubuntu, while ufw is active, it adds ufw rules for VRRP and the ports instead (commented `keepalived`). It never starts or enables a firewall.
 
 | Variable | Default | |
 |---|---|---|
 | `keepalived_manage_firewall` | `true` | Set to `false` to manage the firewall yourself |
-| `keepalived_firewall_zone` | `public` | Zone the rules go in |
+| `keepalived_firewall_zone` | `public` | firewalld zone the rules go in |
 | `keepalived_firewall_ports` | `[]` | Service ports reached through the addresses, e.g. `["5601/tcp"]` |
 
-If firewalld is not running the role says what still has to be allowed rather than failing.
+If neither firewalld nor ufw is running the role says what still has to be allowed rather than failing.
 
 ## Hardened hosts (FIPS, SELinux, fapolicyd)
 
@@ -271,13 +276,19 @@ KVM/libvirt (`qemu:///system`). Each VM has its own kernel, so SELinux is enforc
 as `vm.max_map_count` are the VM's own. Overrides for the VMs go in
 `molecule/kvm/inventory/group_vars/<group>/kvm.yml`.
 
+[`molecule/kvm-ubuntu2404/`](molecule/kvm-ubuntu2404/) and
+[`molecule/kvm-ubuntu2604/`](molecule/kvm-ubuntu2604/) run the same thing on Ubuntu 24.04 and 26.04
+VMs. They only swap the cloud image, and share `molecule/kvm/`'s playbooks and inventory. On Ubuntu
+the web hosts run ufw, so VRRP and the web port only get through when the role's ufw rules work.
+
 ```bash
-molecule test -s kvm
+for s in kvm kvm-ubuntu2404 kvm-ubuntu2604; do molecule test -s "$s" || break; done
 ```
 
 The machine running Molecule needs libvirt, `virt-install`, `qemu-img` and `xorriso`, and its user
-must be able to manage `qemu:///system`. The AlmaLinux 10 cloud image downloads once, checksum
-verified, to `/var/lib/libvirt/images/molecule`; each VM gets a throwaway disk on top of it.
+must be able to manage `qemu:///system`. Each cloud image downloads once, checksum verified, to
+`/var/lib/libvirt/images/molecule`; each VM gets a throwaway disk on top of it. VM names include the
+scenario, so the three scenarios can also run side by side if the machine has the memory.
 
 ## Role layout
 
@@ -291,9 +302,9 @@ verified, to `/var/lib/libvirt/images/molecule`; each VM gets a throwaway disk o
 │   ├── facts.yml                # resolves instances, group members, priorities, peers
 │   ├── preflight.yml            # per host, then across hosts
 │   ├── install.yml
-│   ├── system.yml               # script user, helper, sysctl, firewalld
+│   ├── system.yml               # script user, helper, sysctl, firewalld or ufw
 │   ├── fapolicyd.yml
-│   ├── configure.yml            # sysconfig, keepalived.conf (config-tested)
+│   ├── configure.yml            # daemon options, keepalived.conf (config-tested)
 │   ├── service.yml
 │   └── wait_ready.yml           # each address answers on its port
 ├── templates/

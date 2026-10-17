@@ -24,3 +24,6 @@ keepalived_instances:
 
 # Not running in containers: keep the run short when something is wrong.
 keepalived_wait_timeout: 60
+
+# Opened by the role where a firewall runs (ufw on the Ubuntu web hosts).
+keepalived_firewall_ports: ["{{ test_web_port }}/tcp"]

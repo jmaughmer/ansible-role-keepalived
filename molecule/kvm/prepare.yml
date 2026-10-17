@@ -1,4 +1,33 @@
 ---
+# Cloud images finish first-boot setup in the background (on Ubuntu that
+# includes apt runs that hold the package lock), so wait for it.
+- name: Wait for cloud-init
+  hosts: all
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Wait for cloud-init to finish
+      ansible.builtin.command: cloud-init status --wait
+      changed_when: false
+      failed_when: false
+
+# The roles and tests reach the other hosts by inventory name. Ubuntu's
+# systemd-resolved does not send single-label names to libvirt's DNS, so give
+# every VM the others' addresses directly.
+- name: Make the VMs resolve each other by name
+  hosts: all
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Add every VM to /etc/hosts
+      ansible.builtin.blockinfile:
+        path: /etc/hosts
+        marker: "# {mark} molecule hosts"
+        block: |
+          {% for host in groups['all'] %}
+          {{ hostvars[host].ansible_host }} {{ host }}
+          {% endfor %}
+
 # vm.max_map_count is the container host's in the default scenario; on a VM
 # it is the VM's own (65530 on a fresh AlmaLinux), too low for Elasticsearch.
 # Raise it for this boot only, as on the container host.

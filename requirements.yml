@@ -4,3 +4,5 @@
 collections:
   - name: ansible.posix
     version: ">=1.5.2"   # firewalld protocol parameter
+  - name: community.general
+    version: ">=10.3.0"  # ufw on Ubuntu (proto vrrp)

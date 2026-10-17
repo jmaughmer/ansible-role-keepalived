@@ -2,7 +2,7 @@
 - name: Configure | Set the daemon options
   ansible.builtin.template:
     src: sysconfig.j2
-    dest: /etc/sysconfig/keepalived
+    dest: "{{ _ka_sysconfig_file }}"
     owner: root
     group: root
     mode: "0644"
