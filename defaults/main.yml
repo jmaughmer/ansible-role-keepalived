@@ -3,12 +3,14 @@
 # Platform
 # =============================================================================
 # Distributions accepted by preflight, as reported by ansible_facts['distribution'].
-# Major versions 9 and 10 are supported. Other Enterprise Linux rebuilds, such as
-# CentOS (Stream) or OracleLinux, can be added here but are not tested.
+# Enterprise Linux 9 and 10 and Ubuntu 24.04 and 26.04 are supported. Other
+# Enterprise Linux rebuilds, such as CentOS (Stream) or OracleLinux, can be added
+# here but are not tested.
 keepalived_supported_distributions:
   - RedHat
   - AlmaLinux
   - Rocky
+  - Ubuntu
 
 # =============================================================================
 # Virtual addresses
@@ -109,12 +111,14 @@ keepalived_global_defs_extra: []
 # =============================================================================
 # Package and service
 # =============================================================================
-# keepalived comes from the host's enabled repositories (AppStream on EL 9/10).
+# keepalived comes from the host's enabled repositories (AppStream on EL 9/10,
+# main on Ubuntu).
 keepalived_packages:
   - keepalived
 
-# Options for the keepalived daemon (/etc/sysconfig/keepalived). --vrrp runs
-# only the VRRP subsystem; the role does not use IPVS.
+# Options for the keepalived daemon (KEEPALIVED_OPTIONS in /etc/sysconfig/keepalived
+# on Enterprise Linux, DAEMON_ARGS in /etc/default/keepalived on Ubuntu). --vrrp
+# runs only the VRRP subsystem; the role does not use IPVS.
 keepalived_options: "-D --vrrp"
 
 keepalived_conf_dir: /etc/keepalived
@@ -139,8 +143,10 @@ keepalived_allow_limit: false
 # =============================================================================
 # Firewall
 # =============================================================================
-# Accept VRRP (IP protocol 112) in firewalld, permanently and immediately.
+# Accept VRRP (IP protocol 112) in firewalld, permanently and immediately, or in
+# ufw on Ubuntu. Rules are only added while the firewall is running.
 keepalived_manage_firewall: true
+# firewalld only
 keepalived_firewall_zone: public
 # Service ports reached through the virtual addresses, e.g. ["5601/tcp"]. The
 # service roles open them already; list them here too when this role may run
@@ -150,7 +156,8 @@ keepalived_firewall_ports: []
 # =============================================================================
 # Hardened hosts (fapolicyd)
 # =============================================================================
-# Trust the health check helper this role installs, which rpm did not.
+# Trust the health check helper this role installs, which rpm did not
+# (Enterprise Linux; fapolicyd is normally absent on Ubuntu).
 #   auto  - when fapolicyd is running
 #   true / false
 keepalived_fapolicyd_trust: auto
@@ -167,4 +174,5 @@ keepalived_task_delay: 15
 # SSH session drops: maximum run time and poll interval (seconds).
 keepalived_download_async_timeout: 3600
 keepalived_download_async_poll: 15
+# Seconds to wait for the dnf or apt lock
 keepalived_dnf_lock_timeout: 300

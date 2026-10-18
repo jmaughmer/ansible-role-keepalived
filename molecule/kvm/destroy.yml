@@ -5,8 +5,11 @@
   become: false   # runs as you on this machine; only the VMs escalate
   gather_facts: false
   vars:
-    # Per repo, so scenarios of different roles can run side by side
-    vm_prefix: "molecule-{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') | basename | regex_replace('^ansible-role-', '') }}-"
+    # Per repo and scenario, so scenarios of different roles, and the kvm
+    # scenarios of one role (kvm, kvm-ubuntu2404, ...), can run side by side
+    vm_prefix: >-
+      molecule-{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') | basename | regex_replace('^ansible-role-', '') }}-{{
+      lookup('env', 'MOLECULE_SCENARIO_NAME') }}-
     libvirt_uri: qemu:///system
     image_dir: /var/lib/libvirt/images/molecule
   tasks:

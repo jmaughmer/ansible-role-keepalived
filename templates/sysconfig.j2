@@ -1,3 +1,7 @@
 # {{ ansible_managed }}
 # Options for keepalived. See "keepalived --help" for the available options.
+{% if ansible_facts['os_family'] == 'Debian' %}
+DAEMON_ARGS="{{ keepalived_options }}"
+{% else %}
 KEEPALIVED_OPTIONS="{{ keepalived_options }}"
+{% endif %}

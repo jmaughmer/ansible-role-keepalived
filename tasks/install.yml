@@ -1,8 +1,8 @@
 ---
-# keepalived comes from the host's enabled repositories (AppStream). Package
-# downloads run as async jobs so a dropped SSH session does not abort them,
-# and are retried if the download itself fails.
-- name: Install | Install keepalived
+# keepalived comes from the host's enabled repositories (AppStream, or main on
+# Ubuntu). Package downloads run as async jobs so a dropped SSH session does
+# not abort them, and are retried if the download itself fails.
+- name: Install | Install keepalived (dnf)
   ansible.builtin.dnf:
     name: "{{ keepalived_packages }}"
     state: present
@@ -13,3 +13,19 @@
   until: _ka_package_install is not failed
   retries: "{{ keepalived_task_retries }}"
   delay: "{{ keepalived_task_delay }}"
+  when: ansible_facts['os_family'] != 'Debian'
+
+- name: Install | Install keepalived (apt)
+  ansible.builtin.apt:
+    name: "{{ keepalived_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: "{{ keepalived_dnf_lock_timeout }}"
+  async: "{{ 0 if ansible_check_mode else keepalived_download_async_timeout }}"
+  poll: "{{ keepalived_download_async_poll }}"
+  register: _ka_package_install_apt
+  until: _ka_package_install_apt is not failed
+  retries: "{{ keepalived_task_retries }}"
+  delay: "{{ keepalived_task_delay }}"
+  when: ansible_facts['os_family'] == 'Debian'
