@@ -213,7 +213,7 @@ If neither firewalld nor ufw is running the role says what still has to be allow
 
 The role is meant to run on hosts with the DISA STIG applied.
 
-- **fapolicyd.** Ansible itself has to be allowed first; see the [Kibana role's README](https://github.com/jmaughmer/ansible-role-kibana#fapolicyd) for the rule. Beyond that, fapolicyd stops bash reading scripts rpm didn't install, so with `keepalived_fapolicyd_trust: auto` the role adds the health check helper to the trust database (`/etc/fapolicyd/trust.d/ansible-keepalived`) when fapolicyd is running, and rewrites the entry when the helper changes. A `script` check's own command has to be trusted too.
+- **fapolicyd.** Ansible needs no rule of its own while it runs as root; see the [Kibana role's README](https://github.com/jmaughmer/ansible-role-kibana#fapolicyd). fapolicyd refuses to run programs and scripts rpm did not install, so with `keepalived_fapolicyd_trust: auto` the role adds the health check helper to the trust database (`/etc/fapolicyd/trust.d/ansible-keepalived`) when fapolicyd is running, and rewrites the entry when the helper changes. A `script` check's own command has to be trusted too.
 - **SELinux.** keepalived runs confined as `keepalived_t`. The helper lives in `/usr/libexec/keepalived`, which the policy labels `keepalived_unconfined_script_exec_t`, so checks can reach any port without changing booleans. A `script` check elsewhere runs confined, and may need `keepalived_connect_any`.
 - **FIPS.** Nothing to do: VRRP version 3 has no authentication, and the checks only open connections.
 - **Health checks run unprivileged** (`enable_script_security`, `script_user keepalived_script`), and keepalived refuses scripts in paths that user could change.
