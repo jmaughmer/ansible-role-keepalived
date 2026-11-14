@@ -4,5 +4,10 @@ examples/collections/
 
 *.retry
 .ansible/
+.cache/
+.molecule/
+.venv/
 .vault_pass*
 vault-password*
+__pycache__/
+*.pyc
