@@ -1,57 +1,68 @@
 ---
-# Three systemd containers (rootless Podman is fine) on one network:
-#   ka-1, ka-2   the inventory group "web", which the role is applied to; each
-#                runs a small web server on port 8080 (prepare.yml)
-#   ka-client    reaches the web servers through the virtual addresses
-# MOLECULE_DISTRO picks the EL release (default rockylinux9; also
-# rockylinux10). The playbooks and inventory here are shared with the other
-# scenarios. Ansible connects as root, so the playbooks do not use become: sudo
-# fails under PAM in rootless Podman containers.
+# Tests run on the Proxmox test lab: three real KVM VMs cloned from the lab
+# fleet onto the isolated labnet network (EL release chosen by LAB_TEMPLATE),
+# with SELinux enforcing and firewalld running — VRRP on real interfaces,
+# which containers only approximated:
+#   ka-default-web1, ka-default-web2
+#                  the inventory group "web", which the role is applied to;
+#                  each runs a small web server on port 8080 (prepare.yml)
+#   ka-default-client
+#                  reaches the web servers through the virtual addresses
+# The driver's SSH lands as a sudo user, so inventory/group_vars/all.yml sets
+# ansible_become and every task of the repo's own playbooks runs privileged
+# through it. All Proxmox connection details live in the driver's secrets file
+# on the control machine, not here.
 #
-# keepalived adds the addresses inside the containers, which needs NET_ADMIN,
-# and sends VRRP over a raw socket (NET_RAW). Inside containers SELinux is off
-# and firewalld isn't installed, so this exercises the role's skip paths for
-# both.
+# Default VMIDs are the repo's 9290-9292 band, via LAB_VMID_0..2 so the lab's
+# `mlab` runner can claim a free band per run and allow parallel runs of this
+# repo; a plain molecule test uses the pinned band, one lab run at a time.
+# The virtual addresses (.240/.241 of the web hosts' labnet /24) sit outside
+# the lab's DHCP range (.100-.200), so they never clash with leases.
 #
-# The sequence adds `check` (converge in check mode on the converged hosts)
-# after the idempotence check, and side_effect.yml (failover) before verify.
+# Run on the lab's molecule control machine:
+#   /root/labnet/mlab test -s default              # parallel-safe, recommended
+#   molecule test                                  # pinned band
+#   LAB_TEMPLATE=template-alma10 molecule test     # the other EL release
+#   MOLECULE_KEEPALIVED_UNICAST=true molecule test # unicast peers, not multicast
 role_name_check: 1
 
 dependency:
-  name: galaxy   # installs requirements.yml next to this file
+  name: galaxy
+  enabled: false        # collections preinstalled on the control machine
+prerun: false
 
 driver:
-  name: podman
+  name: molecule-proxmox
+  options:
+    proxmox_secrets: ${LAB_PROXMOX_SECRETS:-/root/.config/molecule/proxmox-secrets.yml}
+    node: ${LAB_NODE:-galactica}
+    validate_certs: false   # the lab's PVE uses its self-signed cert
+    ssh_user: labadmin
+    ssh_identity_file: /root/.ssh/id_ed25519
+    full: true
+    pool: testlab
+    timeout: 300
 
 platforms:
-  - name: ka-1
-    image: "docker.io/geerlingguy/docker-${MOLECULE_DISTRO:-rockylinux9}-ansible:latest"
-    pre_build_image: true
-    override_command: false   # keep the image's own CMD: systemd as PID 1
-    systemd: always
-    capabilities: [NET_ADMIN, NET_RAW]
-    network: keepalived_molecule   # created by the driver from the first platform
+  - name: ka-default-web1
+    template_name: ${LAB_TEMPLATE:-template-alma9}
+    newid: ${LAB_VMID_0:-9290}
     groups: [web]
 
-  - name: ka-2
-    image: "docker.io/geerlingguy/docker-${MOLECULE_DISTRO:-rockylinux9}-ansible:latest"
-    pre_build_image: true
-    override_command: false
-    systemd: always
-    capabilities: [NET_ADMIN, NET_RAW]
-    network: keepalived_molecule
+  - name: ka-default-web2
+    template_name: ${LAB_TEMPLATE:-template-alma9}
+    newid: ${LAB_VMID_1:-9291}
     groups: [web]
 
-  - name: ka-client
-    image: "docker.io/geerlingguy/docker-${MOLECULE_DISTRO:-rockylinux9}-ansible:latest"
-    pre_build_image: true
-    override_command: false
-    systemd: always
-    network: keepalived_molecule
+  - name: ka-default-client
+    template_name: ${LAB_TEMPLATE:-template-alma9}
+    newid: ${LAB_VMID_2:-9292}
     groups: [client]
 
 provisioner:
   name: ansible
+  env:
+    ANSIBLE_ROLES_PATH: "${MOLECULE_PROJECT_DIRECTORY}/..:/root/.ansible/roles"
   inventory:
     links:
       group_vars: inventory/group_vars/
@@ -61,7 +72,6 @@ verifier:
 
 scenario:
   test_sequence:
-    - dependency
     - destroy
     - syntax
     - create

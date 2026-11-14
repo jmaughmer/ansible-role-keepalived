@@ -235,60 +235,49 @@ The role installs one package and otherwise changes a few files, so slow links m
 
 ## Testing
 
-[`molecule/default/`](molecule/default/) runs the role against three systemd containers on one container network: `ka-1` and `ka-2`, which share two addresses in front of a small web server on port 8080, and `ka-client`. The addresses are `.240` and `.241` of the container network, one with an `http` check and the inventory group `web`, the other with a `tcp` check and no group. The sequence is:
+[`molecule/default/`](molecule/default/) runs the role against three real KVM VMs cloned from
+the Proxmox test lab's fleet onto its isolated labnet network — SELinux enforcing, firewalld
+running, VRRP on real interfaces: `ka-default-web1` and `ka-default-web2`, which share two
+addresses (`.240` and `.241` of their labnet /24, outside the lab's DHCP range) in front of a
+small web server on port 8080, and `ka-default-client`. One address carries an `http` check and
+the inventory group `web`, the other a `tcp` check and no group. The sequence is destroy →
+syntax → create → prepare → converge → idempotence → check → side effect → verify → destroy
+(`check` converges in check mode on the installed hosts, which must not fail):
 
-1. **converge**, then **idempotence**: a second converge must change nothing;
-2. **check**: converge in check mode on the installed hosts, which must not fail;
-3. **side effect** ([`side_effect.yml`](molecule/default/side_effect.yml)): the web server on the host holding the addresses is stopped, and both addresses must move to the other host; it is started again, and they must stay where they are;
-4. **verify** ([`verify.yml`](molecule/default/verify.yml)): keepalived is running and enabled; the configuration passes `keepalived --config-test` and holds the expected priorities and checks; the helper belongs to root and runs as the script user; each address is held by exactly one host; and the client reaches the same web server through both.
+- **side effect** ([`side_effect.yml`](molecule/default/side_effect.yml)): the web server on the host holding the addresses is stopped, and both addresses must move to the other host; it is started again, and they must stay where they are;
+- **verify** ([`verify.yml`](molecule/default/verify.yml)): keepalived is running and enabled; the configuration passes `keepalived --config-test` and holds the expected priorities and checks; the helper belongs to root and runs as the script user; each address is held by exactly one host; and the client reaches the same web server through both.
 
-Other scenarios:
-
-| Scenario | What it covers |
-|---|---|
-| `unicast` | The default scenario with `keepalived_unicast: true`. |
-| `preflight` | Settings preflight must refuse, each in its own check: an unsupported distribution, malformed instances, names, addresses and router ids, an unknown interface, IPv6 with VRRP version 2, a host outside its group, priorities out of range or equal, bad checks, clashing ids or addresses on a host and across hosts, hosts that disagree on an address, a unicast peer without an address, and bad firewall or fapolicyd settings. Nothing is installed. |
-| `docker` | The default scenario on Docker instead of Podman. |
-
-```bash
-pip install -r molecule/requirements.txt
-```
-
-```bash
-for s in default unicast preflight; do molecule test -s "$s" || break; done
-```
-
-The scenarios use Podman (rootless works), except `docker`, which needs Docker. keepalived needs `NET_ADMIN` and `NET_RAW` in the containers, which the scenarios grant. `MOLECULE_DISTRO` picks the image (default `rockylinux9`; also `rockylinux10`):
+Tests run on the lab's molecule control machine: `molecule`, `molecule-proxmox` and the role's
+collections are preinstalled there, and the driver's connection secrets and SSH key live only in
+its own config files. Nothing lab-specific is in this repo beyond the fleet template name and the
+default VMID band (9290–9292); hosts, tokens and subnets never leave the control machine. The Test
+Lab project's `molecule-labnet/` directory documents the lab itself. `LAB_TEMPLATE` picks the guest
+release (default `template-alma9`; also `template-alma10`), and `MOLECULE_KEEPALIVED_UNICAST=true`
+runs the whole scenario with unicast peers instead of multicast:
 
 ```bash
-MOLECULE_DISTRO=rockylinux10 molecule test -s preflight
+molecule test                                    # AlmaLinux 9, SELinux enforcing
+LAB_TEMPLATE=template-alma10 molecule test       # the other EL release
+MOLECULE_KEEPALIVED_UNICAST=true molecule test   # unicast VRRP
 ```
 
-Lint with `yamllint .` and `ansible-lint` (configured by [`.yamllint`](.yamllint) and [`.ansible-lint`](.ansible-lint)). There is no GitHub Actions workflow; run the lint and Molecule scenarios locally.
-
-Not covered by containers: firewalld rules, SELinux labels and fapolicyd trust. These need virtual machines with firewalld running, SELinux enforcing and fapolicyd running.
-
-### On KVM virtual machines
-
-[`molecule/kvm/`](molecule/kvm/) runs the default scenario on real AlmaLinux 10 virtual machines
-instead of containers: the same hosts, groups, playbooks and inventory, one VM per host, on local
-KVM/libvirt (`qemu:///system`). Each VM has its own kernel, so SELinux is enforcing and settings such
-as `vm.max_map_count` are the VM's own. Overrides for the VMs go in
-`molecule/kvm/inventory/group_vars/<group>/kvm.yml`.
-
-[`molecule/kvm-ubuntu2404/`](molecule/kvm-ubuntu2404/) and
-[`molecule/kvm-ubuntu2604/`](molecule/kvm-ubuntu2604/) run the same thing on Ubuntu 24.04 and 26.04
-VMs. They only swap the cloud image, and share `molecule/kvm/`'s playbooks and inventory. On Ubuntu
-the web hosts run ufw, so VRRP and the web port only get through when the role's ufw rules work.
+The VMIDs come from `LAB_VMID_0..2` and default to the pinned 9290–9292 band, so a plain
+`molecule test` means one lab run of this repo at a time. For several runs of this repo at once,
+use the lab's `mlab` wrapper, which claims a free VMID band (and an isolated ephemeral directory)
+per run:
 
 ```bash
-for s in kvm kvm-ubuntu2404 kvm-ubuntu2604; do molecule test -s "$s" || break; done
+/root/labnet/mlab test -s default               # parallel-safe run on the control machine
 ```
 
-The machine running Molecule needs libvirt, `virt-install`, `qemu-img` and `xorriso`, and its user
-must be able to manage `qemu:///system`. Each cloud image downloads once, checksum verified, to
-`/var/lib/libvirt/images/molecule`; each VM gets a throwaway disk on top of it. VM names include the
-scenario, so the three scenarios can also run side by side if the machine has the memory.
+Lint with `yamllint .` and `ansible-lint` (configured by [`.yamllint`](.yamllint) and
+[`.ansible-lint`](.ansible-lint)). There is no CI; run the lint and Molecule from the control
+machine.
+
+Not covered by the scenario: settings preflight must refuse, each in its own check (the removed
+`preflight` container scenario); fapolicyd trust entries (needs fapolicyd running); and the
+Ubuntu guest path with ufw (the removed `kvm-ubuntu*` scenarios — on EL the role opens VRRP and
+the web port in firewalld, which the lab does exercise, but the ufw rules are no longer tested).
 
 ## Role layout
 
@@ -309,7 +298,7 @@ scenario, so the three scenarios can also run side by side if the machine has th
 │   └── wait_ready.yml           # each address answers on its port
 ├── templates/
 ├── examples/
-└── molecule/                   # default, unicast, preflight (Podman) and docker scenarios
+└── molecule/                   # the lab default scenario
 ```
 
 ## Related roles

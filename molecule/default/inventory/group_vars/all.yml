@@ -1,12 +1,16 @@
 ---
-# Shared by every scenario that runs the role (inventory links in each
-# molecule.yml): two hosts in the group "web" share two virtual addresses, and
-# ka-client reaches them.
+# The molecule-proxmox driver's SSH lands as a sudo user; the plays need no
+# become of their own because every task runs privileged through it.
+ansible_become: true
+
+# Shared by the scenario (inventory link in molecule.yml): two hosts in the
+# group "web" share two virtual addresses, and the client host reaches them.
 
 test_role_dir: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') }}"
 
-# The virtual addresses are taken from the container network, which Podman or
-# Docker picks: .240 and .241 of the first web host's /24.
+# The virtual addresses are .240 and .241 of the first web host's /24 — on
+# the lab network that is outside the DHCP range (.100-.200), so nothing can
+# be leased them.
 test_net: "{{ hostvars[groups['web'][0]].ansible_facts.default_ipv4.network.split('.')[:3] | join('.') }}"
 test_prefix: "{{ hostvars[groups['web'][0]].ansible_facts.default_ipv4.prefix }}"
 test_vip_web: "{{ test_net }}.240"

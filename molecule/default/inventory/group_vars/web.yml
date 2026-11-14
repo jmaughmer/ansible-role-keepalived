@@ -22,7 +22,7 @@ keepalived_instances:
       fall: 2
       rise: 2
 
-# Not running in containers: keep the run short when something is wrong.
+# Test-only: keep the run short when something is wrong.
 keepalived_wait_timeout: 60
 
 # Opened by the role where a firewall runs (ufw on the Ubuntu web hosts).
