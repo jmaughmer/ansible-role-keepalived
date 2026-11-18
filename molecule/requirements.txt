@@ -2,8 +2,8 @@
 # machine (see README "Testing"):
 #   pip install -r molecule/requirements.txt
 ansible-core>=2.15
-molecule>=6.0
-molecule-proxmox
+molecule>=25.12,<27
+molecule-proxmox>=1.3,<2.0
 # Linters (configured by .yamllint and .ansible-lint at the top of the repo)
 ansible-lint>=24.0
 yamllint>=1.35
