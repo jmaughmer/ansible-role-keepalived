@@ -16,6 +16,28 @@
     - name: Wait for SSH to be up after first boot
       ansible.builtin.wait_for_connection:
 
+    # The lab templates enable cloud-init's package_update_upgrade_install, so a
+    # fresh clone spends its first minutes running `dnf -y upgrade`. dnf takes its
+    # lock only after resolving, so a task that resolves inside that window plans
+    # against the pre-upgrade rpmdb and then reaches for an rpm the upgrade has
+    # already installed and deleted -- [Errno 2] on a /var/cache/dnf/*/packages
+    # path. Seen in ansible-role-bind, where cloud-init was still running three
+    # and a half minutes after boot. Wait for it to settle; it owns resolv.conf
+    # too.
+    - name: Wait for cloud-init to finish its boot-time work
+      ansible.builtin.raw: |
+        for i in $(seq 1 120); do
+          state=$(cloud-init status 2>/dev/null | sed -n 's/^status: //p')
+          case "$state" in
+            done) exit 0 ;;
+            error) echo 'cloud-init reported an error' >&2; exit 1 ;;
+          esac
+          sleep 5
+        done
+        echo 'cloud-init still running after 10 minutes' >&2
+        exit 1
+      changed_when: false
+
     # The AlmaLinux cloud templates were first booted on the LAN, so they can
     # carry a stale /etc/resolv.conf that EL9's cloud images never update
     # (NM dns=none; cloud-init owns the file). Rewrite it from the lease.
